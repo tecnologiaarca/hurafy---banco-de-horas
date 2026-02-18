@@ -2,22 +2,30 @@ import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
 
-// Garante acesso seguro às variáveis de ambiente
-const env = (import.meta as any).env || {};
-
+// Configuração direta para evitar erros de leitura de variáveis de ambiente
 const firebaseConfig = {
-  apiKey: env.VITE_FIREBASE_API_KEY || "",
-  authDomain: env.VITE_FIREBASE_AUTH_DOMAIN || "",
-  projectId: env.VITE_FIREBASE_PROJECT_ID || "",
-  storageBucket: env.VITE_FIREBASE_STORAGE_BUCKET || "",
-  messagingSenderId: env.VITE_FIREBASE_MESSAGING_SENDER_ID || "",
-  appId: env.VITE_FIREBASE_APP_ID || ""
+  apiKey: "AIzaSyCi1MINg44TN11lf7cswbFYcK1hjdKfj7I",
+  authDomain: "hurafy-9b853.firebaseapp.com",
+  projectId: "hurafy-9b853",
+  storageBucket: "hurafy-9b853.firebasestorage.app",
+  messagingSenderId: "592048385877",
+  appId: "1:592048385877:web:d759b14bf5e6c1b2d289dc",
+  measurementId: "G-V567VPXXGV"
 };
 
-// Inicializa o Firebase
-const app = initializeApp(firebaseConfig);
+let app;
+let auth;
+let db;
 
-// Exporta as instâncias para uso em toda a aplicação
-export const auth = getAuth(app);
-export const db = getFirestore(app);
+try {
+  app = initializeApp(firebaseConfig);
+  auth = getAuth(app);
+  db = getFirestore(app);
+  console.log("🔥 Firebase inicializado com sucesso!");
+} catch (error) {
+  console.error("❌ CRITICAL: Falha ao inicializar Firebase:", error);
+  throw error; // Isso será capturado pelo Error Boundary no index.tsx
+}
+
+export { auth, db };
 export default app;

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Save, AlertTriangle, Calendar, Clock, User, ChevronDown, Check, Calculator, Info } from 'lucide-react';
+import { Save, AlertTriangle, Calendar, Clock, User, ChevronDown, Check, Calculator, Info, Loader2 } from 'lucide-react';
 import { Employee, RecordType, TimeRecord, Role } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { firebaseService } from '../services/firebaseService';
@@ -124,27 +124,29 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
     
     const employee = employees.find(e => e.id === selectedEmployee);
     
+    // Objeto de registro conforme estrutura do Firestore
     const newRecord: TimeRecord = {
       id: uuidv4(),
       employeeId: selectedEmployee,
       employeeName: employee?.name || 'Desconhecido',
-      date,
+      date, // Data da ocorrência (input do usuário)
       hours: calculatedDuration.hours,
       minutes: calculatedDuration.minutes,
       startTime,
       endTime,
-      type: mappedRecordType,
+      type: mappedRecordType, // Crédito, Débito ou Neutro
       occurrenceType,
       reason,
-      createdAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(), // Data local para referência UI
       createdBy: currentUser.id
     };
 
     try {
-      // Usando Firebase Service
+      // Salva no Firestore usando o serviço dedicado
       await firebaseService.saveTimeRecord(newRecord);
+      
       setSuccess(true);
-      onRecordAdded();
+      onRecordAdded(); // Atualiza o dashboard/lista
       
       // Reset form
       if (currentUser.role !== Role.EMPLOYEE) {
@@ -159,8 +161,8 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
       
       setTimeout(() => setSuccess(false), 3000);
     } catch (error) {
-      console.error("Error saving record", error);
-      alert("Erro ao salvar no banco de dados.");
+      console.error("Erro ao salvar batida:", error);
+      alert("Falha na comunicação com o servidor. Tente novamente.");
     } finally {
       setLoading(false);
     }
@@ -180,7 +182,7 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
   };
 
   return (
-    <div className="max-w-2xl mx-auto">
+    <div className="max-w-2xl mx-auto animate-fade-in">
       
       {/* SUCCESS POPUP MODAL */}
       {success && (
@@ -190,7 +192,7 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
               <Check size={32} className="text-green-600" strokeWidth={3} />
             </div>
             <h3 className="text-2xl font-bold text-slate-800 mb-2">Sucesso!</h3>
-            <p className="text-slate-600 text-center">Ocorrência salva na nuvem.</p>
+            <p className="text-slate-600 text-center">Registro salvo no banco de dados.</p>
           </div>
         </div>
       )}
@@ -379,16 +381,13 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
             >
               {loading ? (
                 <span className="flex items-center">
-                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                  </svg>
-                  Salvando...
+                  <Loader2 className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" />
+                  Salvando no Firebase...
                 </span>
               ) : (
                 <span className="flex items-center">
                   <Save className="mr-2" size={20} />
-                  Registrar Ocorrência
+                  Registrar Batida
                 </span>
               )}
             </button>

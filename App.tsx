@@ -10,7 +10,15 @@ import { firebaseService } from './services/firebaseService';
 import { Menu } from 'lucide-react';
 import { onAuthStateChanged } from 'firebase/auth';
 
+// Expose service to window for console scripts
+(window as any).firebaseService = firebaseService;
+
 const App: React.FC = () => {
+  // Debug Log
+  useEffect(() => {
+    console.log("🚀 App Component Mounted");
+  }, []);
+
   // Application State
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -20,46 +28,64 @@ const App: React.FC = () => {
   // Authentication State
   const [currentUser, setCurrentUser] = useState<Employee | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
+  const [initError, setInitError] = useState<string | null>(null);
 
   // Load User Session Persistent
   useEffect(() => {
+    // Check if auth is initialized safely
     if (!firebaseService.auth) {
+      const msg = "Firebase Auth service not initialized. Verifique as configurações.";
+      console.error(msg);
+      setInitError(msg);
       setAuthChecked(true);
       return;
     }
 
-    const unsubscribe = onAuthStateChanged(firebaseService.auth, async (user) => {
-      if (user) {
-        // Se existe sessão no Firebase, carrega o perfil completo do Firestore
-        try {
-          const profile = await firebaseService.getOrCreateProfile(user);
-          setCurrentUser(profile);
-          // Opcional: Manter página se reload
-        } catch (e) {
-          console.error("Error loading profile:", e);
+    try {
+      const unsubscribe = onAuthStateChanged(firebaseService.auth, async (user) => {
+        console.log("Auth State Changed:", user ? `User: ${user.email}` : "No User");
+        
+        if (user) {
+          try {
+            const profile = await firebaseService.getOrCreateProfile(user);
+            setCurrentUser(profile);
+          } catch (e: any) {
+            console.error("Error loading profile:", e);
+            setInitError("Erro ao carregar perfil do usuário: " + e.message);
+            setCurrentUser(null);
+          }
+        } else {
           setCurrentUser(null);
         }
-      } else {
-        setCurrentUser(null);
-      }
-      setAuthChecked(true);
-    });
+        setAuthChecked(true);
+      }, (error) => {
+        console.error("Auth Subscription Error:", error);
+        setInitError("Erro na conexão com autenticação.");
+        setAuthChecked(true);
+      });
 
-    return () => unsubscribe();
+      return () => unsubscribe();
+    } catch (error: any) {
+       console.error("Critical error setting up auth listener:", error);
+       setInitError(error.message);
+       setAuthChecked(true);
+    }
   }, []);
 
   // Load Data function
   const fetchData = async () => {
     if (currentUser) {
-      // Carrega colaboradores
-      const emps = await firebaseService.getEmployees();
-      
-      // Carrega registros (Admin vê tudo, Líder vê tudo para relatórios/dashboard por enquanto, ou podemos filtrar no backend)
-      // Para manter a paridade com o Dashboard atual que filtra no frontend, pegamos tudo.
-      const recs = await firebaseService.getRecords();
+      try {
+        console.log("Fetching data from Firestore...");
+        const emps = await firebaseService.getEmployees();
+        const recs = await firebaseService.getRecords();
 
-      setEmployees(emps);
-      setRecords(recs);
+        setEmployees(emps);
+        setRecords(recs);
+        console.log("Data fetched successfully:", { employees: emps.length, records: recs.length });
+      } catch (e) {
+        console.error("Error fetching data:", e);
+      }
     }
   };
 
@@ -81,7 +107,7 @@ const App: React.FC = () => {
     setRecords([]);
   };
 
-  // Optimistic Update Helpers (UI only, data refreshed via refreshData typically)
+  // Optimistic Update Helpers
   const handleLocalRecordUpdate = (updatedRecord: TimeRecord) => {
     setRecords(prevRecords => 
       prevRecords.map(r => r.id === updatedRecord.id ? updatedRecord : r)
@@ -92,8 +118,30 @@ const App: React.FC = () => {
     setRecords(prevRecords => prevRecords.filter(r => r.id !== recordId));
   };
 
+  if (initError) {
+    return (
+      <div className="h-screen flex flex-col items-center justify-center bg-red-50 p-4 text-center">
+        <div className="bg-white p-6 rounded-lg shadow-lg max-w-md">
+          <h2 className="text-red-600 text-xl font-bold mb-2">Erro de Inicialização</h2>
+          <p className="text-slate-600">{initError}</p>
+          <button 
+            onClick={() => window.location.reload()}
+            className="mt-4 px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+          >
+            Tentar Novamente
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   if (!authChecked) {
-    return <div className="h-screen flex items-center justify-center bg-slate-100">Carregando...</div>;
+    return (
+      <div className="h-screen flex flex-col items-center justify-center bg-slate-100 space-y-4">
+         <div className="w-10 h-10 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
+         <p className="text-slate-500 font-medium">Conectando ao banco de dados...</p>
+      </div>
+    );
   }
 
   // If not logged in, show Login Screen
@@ -103,26 +151,37 @@ const App: React.FC = () => {
 
   // Render Page Content based on route
   const renderContent = () => {
-    switch (currentPage) {
-      case 'dashboard':
-        return <Dashboard records={records} employees={employees} />;
-      case 'form':
-        return <TimeEntryForm currentUser={currentUser} employees={employees} onRecordAdded={fetchData} />;
-      case 'employees':
-        return currentUser.role === Role.ADMIN ? <EmployeeList employees={employees} refreshData={fetchData} /> : <div className="text-center p-10 text-slate-500">Acesso negado. Esta área é restrita ao RH.</div>;
-      case 'reports':
-        return (currentUser.role === Role.ADMIN || currentUser.role === Role.LEADER) ? 
-          <Reports 
-            records={records} 
-            employees={employees} 
-            currentUser={currentUser} 
-            refreshData={fetchData} 
-            onUpdateRecord={handleLocalRecordUpdate}
-            onDeleteRecord={handleLocalRecordDelete}
-          /> : 
-          <div className="text-center p-10 text-slate-500">Acesso negado.</div>;
-      default:
-        return <Dashboard records={records} employees={employees} />;
+    try {
+      switch (currentPage) {
+        case 'dashboard':
+          return <Dashboard records={records} employees={employees} />;
+        case 'form':
+          return <TimeEntryForm currentUser={currentUser} employees={employees} onRecordAdded={fetchData} />;
+        case 'employees':
+          return currentUser.role === Role.ADMIN ? 
+            <EmployeeList 
+              employees={employees} 
+              refreshData={fetchData} 
+              currentUser={currentUser}
+            /> : 
+            <div className="text-center p-10 text-slate-500">Acesso negado. Esta área é restrita ao RH.</div>;
+        case 'reports':
+          return (currentUser.role === Role.ADMIN || currentUser.role === Role.LEADER) ? 
+            <Reports 
+              records={records} 
+              employees={employees} 
+              currentUser={currentUser} 
+              refreshData={fetchData} 
+              onUpdateRecord={handleLocalRecordUpdate}
+              onDeleteRecord={handleLocalRecordDelete}
+            /> : 
+            <div className="text-center p-10 text-slate-500">Acesso negado.</div>;
+        default:
+          return <Dashboard records={records} employees={employees} />;
+      }
+    } catch (e) {
+      console.error("Error rendering page content:", e);
+      return <div className="p-4 text-red-500">Erro ao carregar conteúdo da página. Verifique o console.</div>;
     }
   };
 

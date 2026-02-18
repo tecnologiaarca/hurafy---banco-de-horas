@@ -14,7 +14,8 @@ import {
   orderBy, 
   deleteDoc, 
   updateDoc,
-  serverTimestamp 
+  serverTimestamp,
+  writeBatch
 } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { Employee, Role, TimeRecord } from '../types';
@@ -28,7 +29,7 @@ export const firebaseService = {
   async login(email: string, pass: string): Promise<{ success: boolean; user?: Employee; message?: string }> {
     try {
       if (!auth) {
-         return { success: false, message: "Erro: Serviço de autenticação não inicializado." };
+         throw new Error("Serviço de autenticação não está pronto.");
       }
 
       const userCredential = await signInWithEmailAndPassword(auth, email, pass);
@@ -38,13 +39,10 @@ export const firebaseService = {
       console.error("Login Error:", error);
       let msg = "Erro ao realizar login.";
       
-      // Tratamento de erros comuns do Firebase Auth
       if (error.code === 'auth/invalid-credential' || error.code === 'auth/wrong-password' || error.code === 'auth/user-not-found') {
         msg = "E-mail ou senha inválidos.";
       } else if (error.code === 'auth/too-many-requests') {
         msg = "Muitas tentativas. Tente novamente mais tarde.";
-      } else if (error.code === 'auth/invalid-api-key') {
-        msg = "Erro de configuração: API Key inválida ou ausente.";
       } else if (error.code === 'auth/network-request-failed') {
         msg = "Erro de conexão. Verifique sua internet.";
       }
@@ -60,19 +58,46 @@ export const firebaseService = {
   // --- USER PROFILE ---
 
   async getUserProfile(uid: string): Promise<Employee | null> {
-    const docRef = doc(db, 'employees', uid);
-    const docSnap = await getDoc(docRef);
-    return docSnap.exists() ? (docSnap.data() as Employee) : null;
+    try {
+      const docRef = doc(db, 'employees', uid);
+      const docSnap = await getDoc(docRef);
+      return docSnap.exists() ? (docSnap.data() as Employee) : null;
+    } catch (e) {
+      console.error("Erro ao buscar perfil:", e);
+      return null;
+    }
   },
 
   async getOrCreateProfile(user: User, name?: string): Promise<Employee> {
-    const existingProfile = await this.getUserProfile(user.uid);
-    if (existingProfile) return existingProfile;
-
-    // Regra de Negócio: Dono do projeto é ADMIN
     const email = user.email?.toLowerCase() || '';
     const isSuperAdmin = email === 'ti@arcaplast.com.br';
     
+    // Tenta buscar pelo UID primeiro (Login padrão)
+    let existingProfile = await this.getUserProfile(user.uid);
+    
+    // Se não achar pelo UID, tenta buscar pelo username (caso tenha sido importado via CSV e seja o primeiro login)
+    if (!existingProfile && email) {
+        const username = email.split('@')[0];
+        const docRefUser = doc(db, 'employees', username);
+        const docSnapUser = await getDoc(docRefUser);
+        
+        if (docSnapUser.exists()) {
+            console.log("Perfil encontrado via username (importado). Vinculando UID...");
+            existingProfile = docSnapUser.data() as Employee;
+        }
+    }
+    
+    if (existingProfile) {
+      if (isSuperAdmin && existingProfile.role !== Role.ADMIN) {
+        console.log("Atualizando permissão de Super Admin...");
+        const updated = { ...existingProfile, role: Role.ADMIN };
+        await setDoc(doc(db, 'employees', user.uid), updated, { merge: true });
+        return updated;
+      }
+      return existingProfile;
+    }
+
+    console.log("Criando novo perfil para:", email);
     const newEmployee: Employee = {
       id: user.uid,
       name: name || user.displayName || 'Colaborador',
@@ -90,6 +115,10 @@ export const firebaseService = {
 
   // --- EMPLOYEES CRUD ---
 
+  async getAllUsers(): Promise<Employee[]> {
+    return this.getEmployees();
+  },
+
   async getEmployees(): Promise<Employee[]> {
     try {
       const q = query(collection(db, 'employees'), orderBy('name'));
@@ -101,8 +130,112 @@ export const firebaseService = {
     }
   },
 
+  // Função robusta para deletar todos os usuários exceto TI e usuário atual
+  async deleteAllEmployees(currentUserEmail: string): Promise<boolean> {
+    console.log("🚀 LIMPEZA INICIADA...");
+    
+    try {
+      const q = query(collection(db, 'employees'));
+      const querySnapshot = await getDocs(q);
+      
+      const batch = writeBatch(db);
+      let deleteCount = 0;
+
+      querySnapshot.forEach((doc) => {
+        const data = doc.data() as Employee;
+        const email = data.email?.toLowerCase();
+
+        // Proteção Crítica: Não apagar o Admin TI e nem o usuário que está logado executando a ação
+        if (email === 'ti@arcaplast.com.br' || email === currentUserEmail?.toLowerCase()) {
+          console.log(`🛡️ Protegendo usuário admin: ${data.name} (${email})`);
+          return;
+        }
+
+        console.log(`🗑️ Agendando exclusão: ${data.name} (${doc.id})`);
+        batch.delete(doc.ref);
+        deleteCount++;
+      });
+
+      if (deleteCount > 0) {
+        await batch.commit();
+        console.log(`✅ LIMPEZA CONCLUÍDA! ${deleteCount} colaboradores removidos.`);
+        return true;
+      } else {
+        console.log("ℹ️ Nenhum colaborador elegível para remoção encontrado.");
+        return true;
+      }
+    } catch (error) {
+      console.error("❌ Erro fatal ao limpar banco:", error);
+      throw error;
+    }
+  },
+
+  async importUsersFromCSV(usersList: any[]) {
+    return this.importAllColaboradores(usersList);
+  },
+
+  async importAllColaboradores(usersList: any[]) {
+    console.log(`🚀 Iniciando importação em lote de ${usersList.length} registros...`);
+    try {
+      const batch = writeBatch(db);
+      let count = 0;
+
+      usersList.forEach((user, index) => {
+        if (!user.id || !user.name) {
+          console.warn(`Linha ${index + 1} ignorada: ID ou Nome faltando.`);
+          return;
+        }
+
+        // Garante que o ID não tenha espaços ou caracteres inválidos para documento
+        const safeId = user.id.trim().toLowerCase();
+        const userRef = doc(db, 'employees', safeId);
+        
+        // Mapeia os campos do CSV para a estrutura da interface Employee
+        const userData = {
+          id: safeId,
+          username: safeId,
+          name: user.name,
+          email: `${safeId}@arcaplast.com.br`, 
+          role: user.role,
+          team: user.department, 
+          department: user.department,
+          company: user.company,
+          active: true,
+          canLogin: user.role === 'ADMIN' || user.role === 'LEADER',
+          updatedAt: serverTimestamp()
+        };
+        
+        console.log(`📄 Processando linha ${index + 1}: ${user.name}`);
+        batch.set(userRef, userData, { merge: true });
+        count++;
+      });
+      
+      if (count > 0) {
+        await batch.commit();
+        console.log("✅ Lote (batch) enviado com sucesso ao Firebase!");
+        return true;
+      } else {
+        console.log("⚠️ Nenhum registro válido para importar.");
+        return false;
+      }
+    } catch (error) {
+      console.error("❌ Erro detalhado na importação:", error);
+      throw error;
+    }
+  },
+
+  async updateUserRole(uid: string, newRole: Role): Promise<boolean> {
+    try {
+      const docRef = doc(db, 'employees', uid);
+      await updateDoc(docRef, { role: newRole });
+      return true;
+    } catch (e) {
+      console.error("Erro ao atualizar cargo:", e);
+      return false;
+    }
+  },
+
   async addEmployee(employee: Employee): Promise<void> {
-    // Nota: Criar o documento no Firestore não cria o usuário no Auth automaticamente.
     await setDoc(doc(db, 'employees', employee.id), employee);
   },
 
@@ -124,10 +257,9 @@ export const firebaseService = {
   // --- TIME RECORDS CRUD ---
 
   async saveTimeRecord(record: TimeRecord): Promise<void> {
-    // Salva com serverTimestamp para ordenação precisa no backend
     await setDoc(doc(db, 'time_records', record.id), {
       ...record,
-      timestamp: serverTimestamp() // Campo auxiliar para ordenação
+      timestamp: serverTimestamp()
     });
   },
 
@@ -155,9 +287,14 @@ export const firebaseService = {
         orderBy('date', 'desc')
       );
       const querySnapshot = await getDocs(q);
-      return querySnapshot.docs.map(doc => doc.data() as TimeRecord);
+      
+      return querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        const { timestamp, ...recordData } = data; 
+        return recordData as TimeRecord;
+      });
     } catch (e) {
-      console.error("Error fetching user records:", e);
+      console.error(`Error fetching records for user ${userId}:`, e);
       return [];
     }
   },
