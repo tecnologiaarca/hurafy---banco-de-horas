@@ -1,3 +1,4 @@
+
 export enum Role {
   ADMIN = 'ADMIN', // HR
   LEADER = 'LEADER',
@@ -38,6 +39,7 @@ export interface TimeRecord {
   createdBy: string; // Leader ID
   status?: string; // 'regularized' or undefined
   isAdjustment?: boolean; // New field for zero-impact adjustments
+  batchId?: string; // ID único para agrupar lançamentos em massa
 }
 
 export interface DashboardStats {
@@ -45,4 +47,10 @@ export interface DashboardStats {
   totalPositiveHours: number;
   totalNegativeHours: number;
   netBalance: number;
+}
+
+// Interfaces para Configurações Dinâmicas
+export interface AppSetting {
+  id: string;
+  name: string;
 }

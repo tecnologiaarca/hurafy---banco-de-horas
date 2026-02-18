@@ -1,6 +1,7 @@
 import { 
   signInWithEmailAndPassword, 
   signOut, 
+  sendPasswordResetEmail,
   User 
 } from 'firebase/auth';
 import { 
@@ -15,10 +16,11 @@ import {
   deleteDoc, 
   updateDoc,
   serverTimestamp,
-  writeBatch
+  writeBatch,
+  addDoc
 } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
-import { Employee, Role, TimeRecord, RecordType } from '../types';
+import { Employee, Role, TimeRecord, RecordType, AppSetting } from '../types';
 
 export const firebaseService = {
   auth,
@@ -53,6 +55,27 @@ export const firebaseService = {
 
   async logout(): Promise<void> {
     if (auth) await signOut(auth);
+  },
+
+  async sendPasswordReset(email: string): Promise<{ success: boolean; message: string }> {
+    try {
+      if (!auth) throw new Error("Auth service not initialized");
+      await sendPasswordResetEmail(auth, email);
+      return { success: true, message: "E-mail de recuperação enviado! Verifique sua caixa de entrada." };
+    } catch (error: any) {
+      console.error("Reset Password Error:", error);
+      let msg = "Erro ao enviar e-mail de recuperação.";
+      
+      if (error.code === 'auth/user-not-found') {
+        msg = "Este e-mail não está cadastrado no sistema.";
+      } else if (error.code === 'auth/invalid-email') {
+        msg = "Formato de e-mail inválido.";
+      } else if (error.code === 'auth/too-many-requests') {
+        msg = "Muitas tentativas. Aguarde um momento.";
+      }
+
+      return { success: false, message: msg };
+    }
   },
 
   // --- USER PROFILE ---
@@ -254,6 +277,55 @@ export const firebaseService = {
     }
   },
 
+  // --- SETTINGS (COMPANIES & AREAS) ---
+  
+  async getSettingsList(collectionName: 'settings_companies' | 'settings_areas'): Promise<AppSetting[]> {
+    try {
+      const q = query(collection(db, collectionName), orderBy('name'));
+      const querySnapshot = await getDocs(q);
+      return querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        name: doc.data().name
+      }));
+    } catch (e) {
+      console.error(`Error fetching ${collectionName}:`, e);
+      return [];
+    }
+  },
+
+  async addSettingItem(collectionName: 'settings_companies' | 'settings_areas', name: string): Promise<boolean> {
+    try {
+      await addDoc(collection(db, collectionName), { 
+        name, 
+        createdAt: serverTimestamp() 
+      });
+      return true;
+    } catch (e) {
+      console.error(`Error adding to ${collectionName}:`, e);
+      return false;
+    }
+  },
+
+  async updateSettingItem(collectionName: 'settings_companies' | 'settings_areas', id: string, name: string): Promise<boolean> {
+    try {
+      await updateDoc(doc(db, collectionName, id), { name });
+      return true;
+    } catch (e) {
+      console.error(`Error updating ${collectionName}:`, e);
+      return false;
+    }
+  },
+
+  async deleteSettingItem(collectionName: 'settings_companies' | 'settings_areas', id: string): Promise<boolean> {
+    try {
+      await deleteDoc(doc(db, collectionName, id));
+      return true;
+    } catch (e) {
+      console.error(`Error deleting from ${collectionName}:`, e);
+      return false;
+    }
+  },
+
   // --- TIME RECORDS CRUD ---
 
   async saveTimeRecord(record: TimeRecord): Promise<void> {
@@ -266,8 +338,6 @@ export const firebaseService = {
   // Nova função para lançamentos manuais do RH
   async saveManualOccurrence(occurrenceData: any): Promise<void> {
     try {
-      // Reutiliza a estrutura de TimeRecord, mas mapeia campos específicos se necessário
-      // occurrenceData já deve vir formatado ou podemos formatar aqui
       await setDoc(doc(db, 'time_records', occurrenceData.id), {
         ...occurrenceData,
         timestamp: serverTimestamp()
@@ -276,6 +346,109 @@ export const firebaseService = {
     } catch (e) {
       console.error("Erro ao salvar ocorrência manual:", e);
       throw e;
+    }
+  },
+
+  // --- GRAVAÇÃO EM LOTE (BULK) ---
+  async saveBulkOccurrences(records: TimeRecord[]): Promise<{ success: boolean; count: number }> {
+    console.log(`🚀 Iniciando gravação em massa de ${records.length} registros...`);
+    try {
+      const CHUNK_SIZE = 450; 
+      const chunks = [];
+      
+      for (let i = 0; i < records.length; i += CHUNK_SIZE) {
+        chunks.push(records.slice(i, i + CHUNK_SIZE));
+      }
+
+      let totalCommitted = 0;
+
+      for (const chunk of chunks) {
+        const batch = writeBatch(db);
+        chunk.forEach(record => {
+           const docRef = doc(db, 'time_records', record.id);
+           batch.set(docRef, {
+             ...record,
+             timestamp: serverTimestamp()
+           });
+        });
+        await batch.commit();
+        totalCommitted += chunk.length;
+        console.log(`✅ Lote de ${chunk.length} registros processado.`);
+      }
+
+      return { success: true, count: totalCommitted };
+    } catch (error) {
+      console.error("❌ Erro na gravação em massa:", error);
+      throw error;
+    }
+  },
+
+  // EXCLUSÃO EM LOTE (POR BATCH_ID)
+  async deleteBatchRecords(batchId: string): Promise<{ success: boolean; count: number }> {
+    console.log(`🗑️ Iniciando exclusão do lote ${batchId}...`);
+    try {
+      const q = query(collection(db, 'time_records'), where('batchId', '==', batchId));
+      const querySnapshot = await getDocs(q);
+      
+      const recordsToDelete = querySnapshot.docs;
+      
+      if (recordsToDelete.length === 0) return { success: true, count: 0 };
+
+      const CHUNK_SIZE = 450; 
+      const chunks = [];
+      
+      for (let i = 0; i < recordsToDelete.length; i += CHUNK_SIZE) {
+        chunks.push(recordsToDelete.slice(i, i + CHUNK_SIZE));
+      }
+
+      for (const chunk of chunks) {
+        const batch = writeBatch(db);
+        chunk.forEach(docSnap => {
+           batch.delete(docSnap.ref);
+        });
+        await batch.commit();
+      }
+      
+      console.log(`✅ Exclusão em lote concluída: ${recordsToDelete.length} removidos.`);
+      return { success: true, count: recordsToDelete.length };
+
+    } catch (error) {
+      console.error("❌ Erro na exclusão em massa:", error);
+      return { success: false, count: 0 };
+    }
+  },
+
+  // ATUALIZAÇÃO EM LOTE (POR BATCH_ID)
+  async updateBatchRecords(batchId: string, updateData: Partial<TimeRecord>): Promise<{ success: boolean; count: number }> {
+    console.log(`✏️ Iniciando atualização do lote ${batchId}...`);
+    try {
+       const q = query(collection(db, 'time_records'), where('batchId', '==', batchId));
+       const querySnapshot = await getDocs(q);
+       
+       const recordsToUpdate = querySnapshot.docs;
+       
+       if (recordsToUpdate.length === 0) return { success: true, count: 0 };
+
+       const CHUNK_SIZE = 450;
+       const chunks = [];
+
+       for (let i = 0; i < recordsToUpdate.length; i += CHUNK_SIZE) {
+         chunks.push(recordsToUpdate.slice(i, i + CHUNK_SIZE));
+       }
+
+       for (const chunk of chunks) {
+         const batch = writeBatch(db);
+         chunk.forEach(docSnap => {
+            batch.update(docSnap.ref, updateData as any);
+         });
+         await batch.commit();
+       }
+
+       console.log(`✅ Atualização em lote concluída: ${recordsToUpdate.length} atualizados.`);
+       return { success: true, count: recordsToUpdate.length };
+    } catch (error) {
+       console.error("❌ Erro na atualização em massa:", error);
+       return { success: false, count: 0 };
     }
   },
 

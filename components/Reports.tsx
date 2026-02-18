@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { FileText, Download, Users, Edit, Trash2, Loader2, Save, X, Check } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { 
+  FileText, Users, Edit, Trash2, Loader2, Save, X, Check, Layers, ChevronDown, ChevronRight, AlertTriangle, FileSpreadsheet, Search, Download, ChevronLeft
+} from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
@@ -27,15 +29,25 @@ const OCCURRENCE_OPTIONS = [
   { label: 'Liberação por atestado médico', type: RecordType.NEUTRAL },
 ];
 
-const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refreshData, onUpdateRecord, onDeleteRecord }) => {
-  const [loadingAction, setLoadingAction] = useState<string | null>(null);
-  
-  // Success Popup State
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+const ITEMS_PER_PAGE = 20;
 
-  // Edit Modal State
+const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refreshData, onUpdateRecord, onDeleteRecord }) => {
+  const [searchTerm, setSearchTerm] = useState('');
+  
+  const [loadingAction, setLoadingAction] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [expandedBatches, setExpandedBatches] = useState<Set<string>>(new Set());
+
+  // Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const [isPageChanging, setIsPageChanging] = useState(false);
+
+  // Modal States
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<TimeRecord | null>(null);
+  const [isBatchEdit, setIsBatchEdit] = useState(false); 
+  
+  // Form States
   const [editDate, setEditDate] = useState('');
   const [editStartTime, setEditStartTime] = useState('');
   const [editEndTime, setEditEndTime] = useState('');
@@ -44,16 +56,17 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
   const [editCalculatedDuration, setEditCalculatedDuration] = useState({ hours: 0, minutes: 0 });
   const [isEditTimeValid, setIsEditTimeValid] = useState(true);
 
-  // --- Logic Checks ---
+  // Reset page when search changes
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm]);
+
   const canUserEdit = (record: TimeRecord) => {
-    // Admin can edit all
     if (currentUser.role === Role.ADMIN) return true;
-    // Leader can edit ONLY if they created it
     if (currentUser.role === Role.LEADER && record.createdBy === currentUser.id) return true;
     return false;
   };
 
-  // --- Helper: Format minutes to HH:MM ---
   const formatTime = (totalMinutes: number) => {
     const hours = Math.floor(Math.abs(totalMinutes) / 60);
     const minutes = Math.abs(totalMinutes) % 60;
@@ -61,7 +74,6 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
     return `${sign}${hours}h ${minutes.toString().padStart(2, '0')}m`;
   };
 
-  // --- Helper: Format Date ---
   const formatDate = (dateString: string) => {
     if (!dateString) return '-';
     if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
@@ -88,6 +100,19 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
     if (strVal.includes('T')) return strVal.split('T')[1].substring(0, 5);
     if (strVal.includes(':')) return strVal.substring(0, 5);
     return strVal.length > 5 ? strVal.substring(0, 5) : strVal;
+  };
+
+  // Helper específico para inputs de formulário (retorna vazio se inválido, nunca '-')
+  const formatTimeForInput = (val?: string | number) => {
+    if (!val) return '';
+    const strVal = String(val);
+    // Se for formato ISO
+    if (strVal.includes('T')) return strVal.split('T')[1].substring(0, 5);
+    // Se for formato HH:mm:ss
+    if (strVal.includes(':')) return strVal.substring(0, 5);
+    // Se for string simples HH:mm
+    if (/^\d{2}:\d{2}/.test(strVal)) return strVal.substring(0, 5);
+    return '';
   };
   
   const safeDateForInput = (dateString: string) => {
@@ -136,10 +161,41 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
     }); 
   };
 
+  // --- EFFECT: HYDRATION (POPULAR FORMULÁRIO) ---
+  // Monitora o `editingRecord` e preenche os campos assim que ele é selecionado.
   useEffect(() => {
+    if (editingRecord && isEditModalOpen) {
+      setEditDate(safeDateForInput(editingRecord.date));
+      
+      const start = formatTimeForInput(editingRecord.startTime);
+      const end = formatTimeForInput(editingRecord.endTime);
+      
+      setEditStartTime(start);
+      setEditEndTime(end);
+      setEditReason(editingRecord.reason || '');
+      setEditOccurrenceType(editingRecord.occurrenceType || 'BH Positivo');
+      
+      // Carrega a duração salva no banco imediatamente para não mostrar 0h 0m
+      setEditCalculatedDuration({
+        hours: editingRecord.hours || 0,
+        minutes: editingRecord.minutes || 0
+      });
+      setIsEditTimeValid(true);
+    }
+  }, [editingRecord, isEditModalOpen]);
+
+  // --- EFFECT: CALCULATION (RECALCULAR DURAÇÃO) ---
+  // Se o usuário mexer nos horários, recalculamos a duração
+  useEffect(() => {
+    // Se os campos estiverem vazios, não recalculamos para não sobrescrever a hidratação inicial com zeros
     if (!editStartTime || !editEndTime) return;
+
     const [startH, startM] = editStartTime.split(':').map(Number);
     const [endH, endM] = editEndTime.split(':').map(Number);
+    
+    // Se a conversão falhar (NaN), aborta
+    if (isNaN(startH) || isNaN(endH)) return;
+
     const startTotalMins = startH * 60 + startM;
     const endTotalMins = endH * 60 + endM;
 
@@ -162,7 +218,28 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
     }, 3000);
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDelete = async (id: string, batchId?: string) => {
+    if (batchId) {
+        if (!confirm(`⚠️ Atenção: Este registro faz parte de um Lançamento em Massa.\n\nDeseja excluir TODOS os registros deste lote?`)) return;
+        
+        setLoadingAction(`batch-${batchId}`);
+        try {
+           const result = await firebaseService.deleteBatchRecords(batchId);
+           if (result.success) {
+               refreshData(); 
+               showSuccessPopup(`Lote excluído! ${result.count} registros removidos.`);
+           } else {
+               alert("Erro ao excluir lote.");
+           }
+        } catch(e) {
+            console.error(e);
+            alert("Erro ao processar exclusão.");
+        } finally {
+            setLoadingAction(null);
+        }
+        return;
+    }
+
     if (!confirm('Tem certeza que deseja excluir este registro permanentemente?')) return;
     setLoadingAction(id);
     try {
@@ -180,17 +257,11 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
     }
   };
 
-  const openEditModal = (record: TimeRecord) => {
+  const openEditModal = (record: TimeRecord, isBatch: boolean = false) => {
+    // Apenas define o registro e abre o modal.
+    // O useEffect [editingRecord] cuidará de preencher os dados.
     setEditingRecord(record);
-    setEditDate(safeDateForInput(record.date));
-    const cleanStart = formatTimeOnly(record.startTime);
-    const cleanEnd = formatTimeOnly(record.endTime);
-    setEditStartTime(cleanStart === '-' ? '' : cleanStart);
-    setEditEndTime(cleanEnd === '-' ? '' : cleanEnd);
-    setEditReason(record.reason);
-    setEditOccurrenceType(record.occurrenceType);
-    setEditCalculatedDuration({ hours: record.hours, minutes: record.minutes });
-    setIsEditTimeValid(true);
+    setIsBatchEdit(isBatch);
     setIsEditModalOpen(true);
   };
 
@@ -198,7 +269,7 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
     e.preventDefault();
     if (!editingRecord || !isEditTimeValid) return;
     if (editCalculatedDuration.hours === 0 && editCalculatedDuration.minutes === 0) {
-      alert("Duração inválida.");
+      alert("Duração inválida ou zerada.");
       return;
     }
 
@@ -206,8 +277,8 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
     const option = OCCURRENCE_OPTIONS.find(o => o.label === editOccurrenceType);
     const newType = option ? option.type : RecordType.CREDIT;
 
-    const updatedRecord: TimeRecord = {
-      ...editingRecord,
+    // Constrói objeto de atualização com os dados do form
+    const updateData: Partial<TimeRecord> = {
       date: editDate,
       startTime: editStartTime,
       endTime: editEndTime,
@@ -219,15 +290,27 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
     };
 
     try {
-        const success = await firebaseService.updateRecord(updatedRecord);
-        if (success) {
-            onUpdateRecord(updatedRecord);
-            setIsEditModalOpen(false);
-            setEditingRecord(null);
-            showSuccessPopup('Registro atualizado com sucesso.');
+        if (isBatchEdit && editingRecord.batchId) {
+            const result = await firebaseService.updateBatchRecords(editingRecord.batchId, updateData);
+            if (result.success) {
+                refreshData();
+                showSuccessPopup(`Lote atualizado! ${result.count} registros alterados.`);
+            } else {
+                alert("Falha ao atualizar lote.");
+            }
         } else {
-            alert("Falha ao salvar no banco.");
+            // Merge cuidadoso: mantém ID original e dados antigos, sobrescreve com novos
+            const updatedRecord = { ...editingRecord, ...updateData };
+            const success = await firebaseService.updateRecord(updatedRecord);
+            if (success) {
+                onUpdateRecord(updatedRecord);
+                showSuccessPopup('Registro atualizado com sucesso.');
+            } else {
+                alert("Falha ao salvar no banco.");
+            }
         }
+        setIsEditModalOpen(false);
+        setEditingRecord(null);
     } catch (error) {
         console.error("Error updating record:", error);
         alert("Erro ao conectar com o servidor.");
@@ -236,14 +319,76 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
     }
   };
 
-  // --- PDF/Excel Generation functions preserved for functionality ---
+  const { processedRecords, batchMap } = useMemo(() => {
+    let filtered = records.filter(r => {
+      // Role Filter
+      if (currentUser.role === Role.ADMIN) return true;
+      if (currentUser.role === Role.LEADER) return r.createdBy === currentUser.id;
+      return false;
+    });
+
+    // Search Filter
+    if (searchTerm.trim()) {
+      const lowerTerm = searchTerm.toLowerCase();
+      filtered = filtered.filter(r => 
+        r.employeeName.toLowerCase().includes(lowerTerm) ||
+        r.occurrenceType.toLowerCase().includes(lowerTerm) ||
+        r.reason.toLowerCase().includes(lowerTerm)
+      );
+    }
+
+    filtered.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    const viewList: any[] = [];
+    const batches: Record<string, TimeRecord[]> = {};
+    const seenBatches = new Set<string>();
+
+    filtered.forEach(record => {
+       if (record.batchId) {
+          if (!batches[record.batchId]) {
+             batches[record.batchId] = [];
+          }
+          batches[record.batchId].push(record);
+
+          if (!seenBatches.has(record.batchId)) {
+             viewList.push({ ...record, isBatchLeader: true });
+             seenBatches.add(record.batchId);
+          }
+       } else {
+          viewList.push(record);
+       }
+    });
+
+    return { processedRecords: viewList, batchMap: batches };
+  }, [records, currentUser, searchTerm]);
+
+  // --- PAGINATION LOGIC ---
+  const totalPages = Math.ceil(processedRecords.length / ITEMS_PER_PAGE);
+  const startIndex = (currentPage - 1) * ITEMS_PER_PAGE;
+  const paginatedRecords = processedRecords.slice(startIndex, startIndex + ITEMS_PER_PAGE);
+
+  const handlePageChange = (newPage: number) => {
+    if (newPage >= 1 && newPage <= totalPages) {
+       setIsPageChanging(true);
+       setCurrentPage(newPage);
+       setTimeout(() => setIsPageChanging(false), 200); // tempo para o fade visual
+    }
+  };
+
+  const toggleBatch = (batchId: string) => {
+     const newSet = new Set(expandedBatches);
+     if (newSet.has(batchId)) newSet.delete(batchId);
+     else newSet.add(batchId);
+     setExpandedBatches(newSet);
+  };
+
   const generateDetailedPDF = () => {
     const doc = new jsPDF();
     doc.setFontSize(18);
     doc.text('Extrato Detalhado de Ocorrências', 14, 22);
     doc.setFontSize(11);
     doc.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')}`, 14, 30);
-    const tableData = displayRecords.map(r => [
+    const tableData = records.map(r => [ 
       formatDate(r.date), getEmployeeCompany(r.employeeId), r.employeeName, getLeaderName(r.createdBy), r.occurrenceType || r.type, r.reason, formatTimeOnly(r.startTime), formatTimeOnly(r.endTime), `${r.hours}h ${r.minutes}m`
     ]);
     autoTable(doc, {
@@ -251,14 +396,14 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
       body: tableData,
       startY: 40,
       styles: { fontSize: 8 },
-      headStyles: { fillColor: [71, 85, 105] },
+      headStyles: { fillColor: [71, 85, 105] }, // Slate-700
       columnStyles: { 5: { cellWidth: 35 } } 
     });
     doc.save('extrato-detalhado.pdf');
   };
 
   const generateDetailedExcel = () => {
-    const ws = XLSX.utils.json_to_sheet(displayRecords.map(r => ({
+    const ws = XLSX.utils.json_to_sheet(records.map(r => ({
       Data: formatDate(r.date), Empresa: getEmployeeCompany(r.employeeId), Colaborador: r.employeeName, Líder: getLeaderName(r.createdBy), 'Tipo de Ocorrência': r.occurrenceType, 'Descrição': r.reason, 'Início': formatTimeOnly(r.startTime), 'Fim': formatTimeOnly(r.endTime), Horas: r.hours, Minutos: r.minutes
     })));
     const wb = XLSX.utils.book_new();
@@ -280,7 +425,7 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
       startY: 40,
       styles: { fontSize: 9, halign: 'center' },
       columnStyles: { 0: { halign: 'left' }, 1: { halign: 'left' }, 5: { fontStyle: 'bold' } },
-      headStyles: { fillColor: [79, 70, 229] },
+      headStyles: { fillColor: [79, 70, 229] }, // Indigo-600
     });
     doc.save('balanco-geral-consolidado.pdf');
   };
@@ -295,16 +440,8 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
     XLSX.writeFile(wb, "balanco-geral-consolidado.xlsx");
   };
 
-  const displayRecords = records
-    .filter(r => {
-      if (currentUser.role === Role.ADMIN) return true;
-      if (currentUser.role === Role.LEADER) return r.createdBy === currentUser.id;
-      return false;
-    })
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-
   return (
-    <div className="space-y-10 animate-fade-in relative">
+    <div className="space-y-8 animate-fade-in relative min-h-[500px]">
       {successMessage && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in">
           <div className="bg-white rounded-2xl shadow-2xl p-8 flex flex-col items-center max-w-sm w-full mx-4 transform transition-all scale-100">
@@ -317,6 +454,7 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
         </div>
       )}
       
+      {/* Header */}
       <div>
         <h2 className="text-2xl font-bold text-slate-800">Central de Relatórios</h2>
         <p className="text-slate-500">
@@ -326,101 +464,302 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
         </p>
       </div>
 
-      {currentUser.role === Role.ADMIN && (
-        <div className="bg-gradient-to-r from-indigo-50 to-white p-6 rounded-xl border border-indigo-100 shadow-sm">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="p-2 bg-indigo-100 text-indigo-700 rounded-lg">
-              <Users size={24} />
+      {/* --- EXPORT SECTION --- */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in">
+        
+        {/* Card 1: Balanço Geral (Admin Only) */}
+        {currentUser.role === Role.ADMIN && (
+            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col h-full">
+                <div className="flex items-start gap-4 mb-4">
+                    <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg shrink-0">
+                    <Users size={24} />
+                    </div>
+                    <div>
+                    <h3 className="text-lg font-bold text-slate-800">Balanço Geral</h3>
+                    <p className="text-sm text-slate-500">Saldo final consolidado por colaborador.</p>
+                    </div>
+                </div>
+                
+                <div className="flex flex-wrap gap-3 mt-auto">
+                    <button 
+                    onClick={generateGeneralPDF} 
+                    className="flex-1 flex items-center justify-center px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:border-indigo-600 hover:text-indigo-600 hover:bg-slate-50 transition-all shadow-sm"
+                    >
+                    <FileText className="mr-2" size={16} /> 
+                    PDF
+                    </button>
+                    <button 
+                    onClick={generateGeneralExcel} 
+                    className="flex-1 flex items-center justify-center px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:border-indigo-600 hover:text-indigo-600 hover:bg-slate-50 transition-all shadow-sm"
+                    >
+                    <FileSpreadsheet className="mr-2" size={16} /> 
+                    Excel
+                    </button>
+                </div>
             </div>
-            <div>
-              <h3 className="text-lg font-bold text-slate-800">Balanço Geral (Consolidado)</h3>
-              <p className="text-sm text-slate-500">Resumo de saldo final de horas por colaborador e setor.</p>
-            </div>
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <button onClick={generateGeneralPDF} className="flex items-center justify-center px-4 py-4 border border-transparent text-sm font-medium rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm transition-all"><Download className="mr-2" size={18} /> Baixar Resumo em PDF</button>
-            <button onClick={generateGeneralExcel} className="flex items-center justify-center px-4 py-4 border border-indigo-200 text-sm font-medium rounded-lg text-indigo-700 bg-white hover:bg-indigo-50 shadow-sm transition-all"><Download className="mr-2" size={18} /> Baixar Resumo em Excel</button>
-          </div>
-        </div>
-      )}
+        )}
 
-      <div className={`p-6 rounded-xl border border-indigo-100 shadow-sm ${currentUser.role === Role.ADMIN ? 'bg-gradient-to-r from-indigo-50 to-white' : 'bg-white'}`}>
-        <div className="flex items-center gap-3 mb-6">
-          <div className="p-2 bg-indigo-100 text-indigo-700 rounded-lg">
-            <FileText size={24} />
-          </div>
-          <div>
-            <h3 className="text-lg font-bold text-slate-800">Extrato de Ocorrências</h3>
-            <p className="text-sm text-slate-500">{currentUser.role === Role.ADMIN ? "Lista completa de todos os registros lançados." : "Lista dos registros lançados por você."}</p>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <button onClick={generateDetailedPDF} className="flex items-center justify-center px-4 py-4 border border-transparent text-sm font-medium rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 shadow-sm transition-all"><Download className="mr-2" size={18} /> Baixar PDF</button>
-          <button onClick={generateDetailedExcel} className="flex items-center justify-center px-4 py-4 border border-indigo-200 text-sm font-medium rounded-lg text-indigo-700 bg-white hover:bg-indigo-50 shadow-sm transition-all"><Download className="mr-2" size={18} /> Baixar Excel</button>
-        </div>
-      </div>
-      
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mt-8">
-        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
-           <h3 className="font-semibold text-slate-700">Registros Encontrados</h3>
-           <span className="text-xs text-slate-400">{displayRecords.length} registros</span>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-slate-200">
-            <thead className="bg-slate-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Data</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Colaborador</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Líder</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Tipo</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Descrição</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Início</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Fim</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-slate-500 uppercase tracking-wider">Tempo</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-slate-500 uppercase tracking-wider">Ações</th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-slate-200">
-              {displayRecords.map((record) => {
-                const editable = canUserEdit(record);
-                return (
-                  <tr key={record.id} className="hover:bg-slate-50">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-900">{formatDate(record.date)}</td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                       <div className="text-sm text-slate-900">{record.employeeName}</div>
-                       <div className="text-xs text-slate-400">{getEmployeeCompany(record.employeeId)}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-indigo-600">{getLeaderName(record.createdBy)}</td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                       <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${record.type === RecordType.CREDIT ? 'bg-green-100 text-green-800' : record.type === RecordType.DEBIT ? 'bg-red-100 text-red-800' : 'bg-slate-100 text-slate-600'}`}>{record.occurrenceType}</span>
-                    </td>
-                    <td className="px-6 py-4 text-sm text-slate-500 max-w-xs truncate" title={record.reason}>{record.reason}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500 font-mono">{formatTimeOnly(record.startTime)}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-500 font-mono">{formatTimeOnly(record.endTime)}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-700">{record.hours}h {record.minutes}m</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      {editable && (
-                        <div className="flex items-center justify-end gap-2">
-                          <button onClick={() => openEditModal(record)} className="text-indigo-600 hover:text-indigo-900 p-1 hover:bg-indigo-50 rounded" title="Editar"><Edit size={16} /></button>
-                          <button onClick={() => handleDelete(record.id)} className="text-red-600 hover:text-red-900 p-1 hover:bg-red-50 rounded" title="Excluir" disabled={loadingAction === record.id}>{loadingAction === record.id ? <Loader2 size={16} className="animate-spin"/> : <Trash2 size={16} />}</button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        {/* Card 2: Extrato Detalhado */}
+        <div className={`bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col h-full ${currentUser.role !== Role.ADMIN ? 'md:col-span-2' : ''}`}>
+            <div className="flex items-start gap-4 mb-4">
+                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg shrink-0">
+                <FileText size={24} />
+                </div>
+                <div>
+                <h3 className="text-lg font-bold text-slate-800">Extrato de Ocorrências</h3>
+                <p className="text-sm text-slate-500">Histórico completo de lançamentos.</p>
+                </div>
+            </div>
+            
+            <div className="flex flex-wrap gap-3 mt-auto">
+                <button 
+                onClick={generateDetailedPDF} 
+                className="flex-1 flex items-center justify-center px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:border-indigo-600 hover:text-indigo-600 hover:bg-slate-50 transition-all shadow-sm"
+                >
+                <FileText className="mr-2" size={16} /> 
+                PDF
+                </button>
+                <button 
+                onClick={generateDetailedExcel} 
+                className="flex-1 flex items-center justify-center px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:border-indigo-600 hover:text-indigo-600 hover:bg-slate-50 transition-all shadow-sm"
+                >
+                <FileSpreadsheet className="mr-2" size={16} /> 
+                Excel
+                </button>
+            </div>
         </div>
       </div>
 
+      {/* --- DIVIDER --- */}
+      <div className="border-t border-slate-200 my-2" />
+
+      {/* --- QUERY SECTION --- */}
+      <div className="animate-fade-in space-y-6">
+        
+        <div className="flex flex-col sm:flex-row gap-4 justify-between items-center bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+            <h3 className="text-lg font-bold text-slate-800 whitespace-nowrap hidden sm:block">
+                Consulta de Registros
+            </h3>
+            <div className="relative w-full sm:max-w-md">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <Search className="h-5 w-5 text-slate-400" />
+                </div>
+                <input
+                type="text"
+                placeholder="Buscar por colaborador, tipo ou motivo..."
+                className="block w-full pl-10 pr-3 py-2.5 border border-slate-200 rounded-lg leading-5 bg-slate-50 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm transition-all"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                />
+            </div>
+            <div className="text-sm text-slate-500 whitespace-nowrap">
+                Total: {processedRecords.length}
+            </div>
+        </div>
+
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+            <div className="overflow-x-auto">
+            <table className={`min-w-full divide-y divide-slate-200 transition-opacity duration-200 ${isPageChanging ? 'opacity-50' : 'opacity-100'}`}>
+                <thead className="bg-slate-50">
+                <tr>
+                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Data</th>
+                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Início</th>
+                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Fim</th>
+                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Colaborador / Lote</th>
+                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Tipo</th>
+                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Descrição</th>
+                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Tempo</th>
+                    <th className="px-6 py-3 text-right text-xs font-bold text-slate-600 uppercase tracking-wider">Ações</th>
+                </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-slate-200">
+                {paginatedRecords.length === 0 ? (
+                    <tr>
+                        <td colSpan={8} className="px-6 py-10 text-center text-slate-500">
+                            Nenhum registro encontrado com os filtros atuais.
+                        </td>
+                    </tr>
+                ) : (
+                    paginatedRecords.map((item) => {
+                    const isBatchRow = item.isBatchLeader === true;
+                    const batchCount = isBatchRow ? batchMap[item.batchId]?.length : 0;
+                    const isExpanded = isBatchRow && expandedBatches.has(item.batchId);
+                    const editable = canUserEdit(item);
+
+                    if (isBatchRow) {
+                    return (
+                        <React.Fragment key={`batch-${item.batchId}`}>
+                            <tr className="bg-purple-50/50 hover:bg-purple-50 border-l-4 border-l-purple-500">
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-slate-800">{formatDate(item.date)}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-xs font-mono text-slate-500">{formatTimeOnly(item.startTime)}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-xs font-mono text-slate-500">{formatTimeOnly(item.endTime)}</td>
+                            <td className="px-6 py-4">
+                                <div className="flex items-center gap-2">
+                                    <button onClick={() => toggleBatch(item.batchId)} className="p-1 rounded hover:bg-purple-200 text-purple-700 transition-colors">
+                                    {isExpanded ? <ChevronDown size={18}/> : <ChevronRight size={18}/>}
+                                    </button>
+                                    <div>
+                                    <div className="flex items-center gap-2 text-sm font-bold text-purple-900">
+                                        <Layers size={16} /> Lançamento em Massa
+                                    </div>
+                                    <div className="text-xs text-purple-600 font-medium mt-0.5">
+                                        {batchCount} colaboradores afetados
+                                    </div>
+                                    </div>
+                                </div>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap">
+                                <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-purple-100 text-purple-800 border border-purple-200`}>
+                                    {item.occurrenceType} (Lote)
+                                </span>
+                            </td>
+                            <td className="px-6 py-4 text-sm text-slate-600 max-w-xs truncate font-medium italic">
+                                {item.reason}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-slate-700">
+                                {item.hours}h {item.minutes}m <span className="text-xs font-normal text-slate-400">(cada)</span>
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                {editable && (
+                                    <div className="flex items-center justify-end gap-2">
+                                    <button onClick={() => openEditModal(item, true)} className="text-indigo-600 hover:text-indigo-800 p-1.5 hover:bg-slate-100 rounded-lg flex items-center gap-1 border border-transparent hover:border-slate-200 transition-all" title="Editar Lote Completo">
+                                        <Edit size={16} />
+                                    </button>
+                                    <button 
+                                        onClick={() => handleDelete(item.id, item.batchId)} 
+                                        className="text-red-600 hover:text-red-900 p-1.5 hover:bg-red-50 rounded-lg flex items-center gap-1 border border-transparent hover:border-red-100 transition-all" 
+                                        title="Excluir Lote Completo"
+                                        disabled={loadingAction === `batch-${item.batchId}`}
+                                    >
+                                        {loadingAction === `batch-${item.batchId}` ? <Loader2 size={16} className="animate-spin"/> : <Trash2 size={16} />}
+                                    </button>
+                                    </div>
+                                )}
+                            </td>
+                            </tr>
+                            {isExpanded && batchMap[item.batchId].map((child: TimeRecord) => (
+                            <tr key={child.id} className="bg-slate-50/50 hover:bg-slate-100 animate-fade-in">
+                                <td className="px-6 py-3 whitespace-nowrap text-xs text-slate-400 pl-12 border-l-4 border-l-transparent">↳</td>
+                                <td className="px-6 py-3 whitespace-nowrap text-xs font-mono text-slate-400">{formatTimeOnly(child.startTime)}</td>
+                                <td className="px-6 py-3 whitespace-nowrap text-xs font-mono text-slate-400">{formatTimeOnly(child.endTime)}</td>
+                                <td className="px-6 py-3 whitespace-nowrap">
+                                    <div className="text-sm text-slate-700">{child.employeeName}</div>
+                                    <div className="text-xs text-slate-400">{getEmployeeCompany(child.employeeId)}</div>
+                                </td>
+                                <td className="px-6 py-3 whitespace-nowrap text-xs text-slate-400">Ver Lote</td>
+                                <td className="px-6 py-3 text-xs text-slate-400 italic">Ver Lote</td>
+                                <td className="px-6 py-3 whitespace-nowrap text-xs text-slate-500 font-mono">
+                                    {child.hours}h {child.minutes}m
+                                </td>
+                                <td className="px-6 py-3 whitespace-nowrap text-right text-xs">
+                                    <span className="text-slate-300 select-none">Vinculado ao Lote</span>
+                                </td>
+                            </tr>
+                            ))}
+                        </React.Fragment>
+                    );
+                    }
+
+                    return (
+                    <tr key={item.id} className="hover:bg-slate-50 transition-colors">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-900">{formatDate(item.date)}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-slate-600">{formatTimeOnly(item.startTime)}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-slate-600">{formatTimeOnly(item.endTime)}</td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm text-slate-900">{item.employeeName}</div>
+                        <div className="text-xs text-slate-400">{getEmployeeCompany(item.employeeId)}</div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${item.type === RecordType.CREDIT ? 'bg-green-100 text-green-800' : item.type === RecordType.DEBIT ? 'bg-red-100 text-red-800' : 'bg-slate-100 text-slate-600'}`}>{item.occurrenceType}</span>
+                        </td>
+                        <td className="px-6 py-4 text-sm text-slate-500 max-w-xs truncate" title={item.reason}>{item.reason}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-slate-700">{item.hours}h {item.minutes}m</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        {editable && (
+                            <div className="flex items-center justify-end gap-2">
+                            <button onClick={() => openEditModal(item)} className="text-indigo-600 hover:text-indigo-800 p-1 hover:bg-slate-50 rounded" title="Editar"><Edit size={16} /></button>
+                            <button onClick={() => handleDelete(item.id)} className="text-red-600 hover:text-red-900 p-1 hover:bg-red-50 rounded" title="Excluir" disabled={loadingAction === item.id}>{loadingAction === item.id ? <Loader2 size={16} className="animate-spin"/> : <Trash2 size={16} />}</button>
+                            </div>
+                        )}
+                        </td>
+                    </tr>
+                    );
+                })
+                )}
+                </tbody>
+            </table>
+            
+            {/* Pagination Controls */}
+            {processedRecords.length > 0 && (
+              <div className="flex items-center justify-between border-t border-slate-200 bg-white px-4 py-3 sm:px-6">
+                <div className="flex flex-1 justify-between sm:hidden">
+                  <button
+                    onClick={() => handlePageChange(currentPage - 1)}
+                    disabled={currentPage === 1}
+                    className="relative inline-flex items-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    Anterior
+                  </button>
+                  <button
+                    onClick={() => handlePageChange(currentPage + 1)}
+                    disabled={currentPage === totalPages}
+                    className="relative ml-3 inline-flex items-center rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    Próximo
+                  </button>
+                </div>
+                <div className="hidden sm:flex sm:flex-1 sm:items-center sm:justify-between">
+                  <div>
+                    <p className="text-sm text-slate-700">
+                      Mostrando <span className="font-medium">{startIndex + 1}</span> até <span className="font-medium">{Math.min(startIndex + ITEMS_PER_PAGE, processedRecords.length)}</span> de <span className="font-medium">{processedRecords.length}</span> resultados
+                    </p>
+                  </div>
+                  <div>
+                    <nav className="isolate inline-flex -space-x-px rounded-md shadow-sm" aria-label="Pagination">
+                      <button
+                        onClick={() => handlePageChange(currentPage - 1)}
+                        disabled={currentPage === 1}
+                        className="relative inline-flex items-center rounded-l-md px-2 py-2 text-slate-400 ring-1 ring-inset ring-slate-300 hover:bg-slate-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <span className="sr-only">Anterior</span>
+                        <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+                      </button>
+                      <span className="relative inline-flex items-center px-4 py-2 text-sm font-semibold text-slate-700 ring-1 ring-inset ring-slate-300 focus:outline-offset-0">
+                         Página {currentPage} de {totalPages}
+                      </span>
+                      <button
+                        onClick={() => handlePageChange(currentPage + 1)}
+                        disabled={currentPage === totalPages}
+                        className="relative inline-flex items-center rounded-r-md px-2 py-2 text-slate-400 ring-1 ring-inset ring-slate-300 hover:bg-slate-50 focus:z-20 focus:outline-offset-0 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <span className="sr-only">Próximo</span>
+                        <ChevronRight className="h-5 w-5" aria-hidden="true" />
+                      </button>
+                    </nav>
+                  </div>
+                </div>
+              </div>
+            )}
+            </div>
+        </div>
+      </div>
+
+      {/* Edit Modal */}
       {isEditModalOpen && editingRecord && (
          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 animate-fade-in-up flex flex-col max-h-[90vh]">
                <div className="flex justify-between items-start mb-4">
                   <div>
-                    <h3 className="text-xl font-bold text-slate-800">Editar Lançamento</h3>
-                    <p className="text-sm text-slate-500">{editingRecord.employeeName}</p>
+                    <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                        {isBatchEdit ? <><Layers size={20} className="text-indigo-600"/> Editar Lote Completo</> : 'Editar Lançamento'}
+                    </h3>
+                    {isBatchEdit ? (
+                        <p className="text-sm text-indigo-700 mt-1 font-medium bg-indigo-50 px-2 py-1 rounded-lg inline-block">
+                            Alterações serão aplicadas para todos os colaboradores deste lote.
+                        </p>
+                    ) : (
+                        <p className="text-sm text-slate-500">{editingRecord.employeeName}</p>
+                    )}
                   </div>
                   <button onClick={() => setIsEditModalOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={20}/></button>
                </div>
@@ -428,14 +767,17 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
                   <div><label className="block text-sm font-medium text-slate-700">Data da Ocorrência</label><input type="date" required value={editDate} onChange={e => setEditDate(e.target.value)} className="mt-1 block w-full border border-slate-300 rounded-lg px-3 py-2 bg-slate-50 text-slate-900"/></div>
                   <div><label className="block text-sm font-medium text-slate-700">Tipo</label><select value={editOccurrenceType} onChange={e => setEditOccurrenceType(e.target.value)} className="mt-1 block w-full border border-slate-300 rounded-lg px-3 py-2 bg-slate-50 text-slate-900">{OCCURRENCE_OPTIONS.map(opt => <option key={opt.label} value={opt.label}>{opt.label}</option>)}</select></div>
                   <div className="grid grid-cols-2 gap-4 bg-slate-50 p-3 rounded-lg border border-slate-200">
-                     <div><label className="block text-xs font-medium text-slate-500">Início</label><input type="time" required value={editStartTime} onChange={e => setEditStartTime(e.target.value)} className="w-full mt-1 border border-slate-300 rounded px-2 py-1 bg-white text-slate-900"/></div>
-                     <div><label className="block text-xs font-medium text-slate-500">Fim</label><input type="time" required value={editEndTime} onChange={e => setEditEndTime(e.target.value)} className={`w-full mt-1 border rounded px-2 py-1 bg-white text-slate-900 ${!isEditTimeValid ? 'border-red-500' : 'border-slate-300'}`}/></div>
+                     <div><label className="block text-xs font-medium text-slate-500">Início</label><input type="time" value={editStartTime} onChange={e => setEditStartTime(e.target.value)} className="w-full mt-1 border border-slate-300 rounded px-2 py-1 bg-white text-slate-900"/></div>
+                     <div><label className="block text-xs font-medium text-slate-500">Fim</label><input type="time" value={editEndTime} onChange={e => setEditEndTime(e.target.value)} className={`w-full mt-1 border rounded px-2 py-1 bg-white text-slate-900 ${!isEditTimeValid ? 'border-red-500' : 'border-slate-300'}`}/></div>
                      <div className="col-span-2 text-center text-sm font-bold text-indigo-600 border-t border-slate-200 pt-2">{isEditTimeValid ? `${editCalculatedDuration.hours}h ${editCalculatedDuration.minutes}m` : <span className="text-red-500">Horário Inválido</span>}</div>
                   </div>
                   <div><label className="block text-sm font-medium text-slate-700">Justificativa</label><textarea required rows={3} value={editReason} onChange={e => setEditReason(e.target.value)} className="mt-1 block w-full border border-slate-300 rounded-lg px-3 py-2 bg-slate-50 text-slate-900"/></div>
                   <div className="flex justify-end gap-3 pt-2">
                      <button type="button" onClick={() => setIsEditModalOpen(false)} className="px-4 py-2 text-slate-700 hover:bg-slate-100 rounded-lg">Cancelar</button>
-                     <button type="submit" disabled={loadingAction === 'modal-save' || !isEditTimeValid} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center">{loadingAction === 'modal-save' ? <Loader2 size={16} className="animate-spin mr-2"/> : <Save size={16} className="mr-2"/>}Salvar Alterações</button>
+                     <button type="submit" disabled={loadingAction === 'modal-save' || !isEditTimeValid} className={`px-4 py-2 text-white rounded-lg flex items-center shadow-lg ${isBatchEdit ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
+                        {loadingAction === 'modal-save' ? <Loader2 size={16} className="animate-spin mr-2"/> : <Save size={16} className="mr-2"/>}
+                        {isBatchEdit ? 'Atualizar Lote' : 'Salvar Alterações'}
+                     </button>
                   </div>
                </form>
             </div>

@@ -15,15 +15,11 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
   const [selectedTeam, setSelectedTeam] = useState<string>('');
   const [selectedEmpId, setSelectedEmpId] = useState<string>('');
   
-  // --- EXISTING DASHBOARD LOGIC ---
-
-  // 1. Extract Unique Companies
   const companies = useMemo(() => {
     const unique = new Set(employees.map(e => e.company).filter(Boolean));
     return Array.from(unique).sort();
   }, [employees]);
 
-  // 2. Extract Available Teams (Filtered by selected Company)
   const availableTeams = useMemo(() => {
     let filtered = employees;
     if (selectedCompany) {
@@ -33,7 +29,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
     return Array.from(unique).sort();
   }, [employees, selectedCompany]);
 
-  // 3. Filter Available Employees (Filtered by Company AND Team)
   const availableEmployees = useMemo(() => {
     let result = employees;
     if (selectedCompany) {
@@ -45,38 +40,27 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
     return result;
   }, [employees, selectedCompany, selectedTeam]);
 
-  // 4. Filter Records based on the filtered employees
   const filteredRecords = useMemo(() => {
-    // Começamos com os registros reais vindos do Firebase
     let result = records || [];
-    
-    // Get valid employee IDs based on current filters (Company/Team)
     const validEmployeeIds = availableEmployees.map(e => e.id);
-    
-    // First, filter records to only show those belonging to the currently filtered employee pool
     result = result.filter(r => validEmployeeIds.includes(r.employeeId));
-
-    // Finally, if a specific employee is selected, filter just for them
     if (selectedEmpId) {
       result = result.filter(r => r.employeeId === selectedEmpId);
     }
-
     return result;
   }, [records, availableEmployees, selectedEmpId]);
 
-  // Handle Changes
   const handleCompanyChange = (company: string) => {
     setSelectedCompany(company);
-    setSelectedTeam(''); // Reset team when company changes
-    setSelectedEmpId(''); // Reset employee
+    setSelectedTeam('');
+    setSelectedEmpId('');
   };
 
   const handleTeamChange = (team: string) => {
     setSelectedTeam(team);
-    setSelectedEmpId(''); // Reset employee when team changes
+    setSelectedEmpId('');
   };
 
-  // 5. Calculate stats
   const stats = useMemo(() => {
     let totalMinutes = 0;
     let positiveMins = 0;
@@ -98,8 +82,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
 
     const isPositive = totalMinutes >= 0;
     const absTotalMinutes = Math.abs(totalMinutes);
-
-    // Calculate Active Employee Count based on current filter scope
     let activeCount = 0;
     if (selectedEmpId) {
       activeCount = 1;
@@ -117,21 +99,15 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
     };
   }, [filteredRecords, availableEmployees, selectedEmpId]);
 
-  // 6. Data for CHART 1: BY COMPANY (Always visible/aggregated)
   const companyChartData = useMemo(() => {
     const dataMap: Record<string, { name: string, horasPositivas: number, horasNegativas: number }> = {};
-    
-    // Usa records filtrados pelos critérios atuais
     filteredRecords.forEach(r => {
       const emp = employees.find(e => e.id === r.employeeId);
       const groupKey = emp ? emp.company : 'Desconhecido';
-      
       const hours = r.hours + (r.minutes / 60);
-      
       if (!dataMap[groupKey]) {
         dataMap[groupKey] = { name: groupKey, horasPositivas: 0, horasNegativas: 0 };
       }
-
       if (r.type === RecordType.CREDIT) {
         dataMap[groupKey].horasPositivas += hours;
       } else if (r.type === RecordType.DEBIT) {
@@ -141,38 +117,28 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
     return Object.values(dataMap);
   }, [filteredRecords, employees]);
 
-  // 7. Data for CHART 2: BY SECTOR (Drilldown: Team -> Employee)
   const drillDownChartData = useMemo(() => {
     const dataMap: Record<string, { name: string, horasPositivas: number, horasNegativas: number }> = {};
-    
     filteredRecords.forEach(r => {
       let groupKey = '';
-      
       if (selectedEmpId) {
-         // If single employee selected, breakdown by OccurrenceType
          groupKey = r.occurrenceType || 'Geral';
       } else if (selectedTeam) {
-         // Viewing a Team: Group by Employee Name
          groupKey = r.employeeName;
       } else {
-         // Global or Company View: Group by Team
          const emp = employees.find(e => e.id === r.employeeId);
          groupKey = emp ? emp.team : 'Outros'; 
       }
-      
       const hours = r.hours + (r.minutes / 60);
-      
       if (!dataMap[groupKey]) {
         dataMap[groupKey] = { name: groupKey, horasPositivas: 0, horasNegativas: 0 };
       }
-
       if (r.type === RecordType.CREDIT) {
         dataMap[groupKey].horasPositivas += hours;
       } else if (r.type === RecordType.DEBIT) {
         dataMap[groupKey].horasNegativas += hours;
       }
     });
-
     return Object.values(dataMap);
   }, [filteredRecords, employees, selectedTeam, selectedEmpId]);
 
@@ -181,6 +147,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
     { name: 'Horas Negativas', value: parseFloat(stats.negative.split('h')[0]) }
   ];
   
+  // Standard Emerald and Red
   const COLORS = ['#10b981', '#ef4444'];
 
   const getDashboardTitle = () => {
@@ -200,7 +167,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
   return (
     <div className="space-y-6 animate-fade-in">
       
-      {/* Header with Filters */}
       <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-slate-800">
@@ -213,7 +179,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
 
         <div className="flex flex-col sm:flex-row gap-3">
           
-          {/* Company Filter */}
           <div className="relative min-w-[200px]">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
               <Building2 className="h-4 w-4 text-slate-400" />
@@ -242,7 +207,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
             </div>
           </div>
 
-          {/* Team Filter */}
           <div className="relative min-w-[200px]">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
               <Briefcase className="h-4 w-4 text-slate-400" />
@@ -271,7 +235,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
             </div>
           </div>
 
-          {/* Employee Filter */}
           <div className="relative min-w-[240px]">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
               <Users className="h-4 w-4 text-slate-400" />
@@ -304,9 +267,8 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
         </div>
       </div>
       
-      {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 transition-all hover:border-indigo-200">
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 transition-all hover:border-emerald-200">
           <div className="flex justify-between items-start">
             <div>
               <p className="text-sm font-medium text-slate-500">Saldo {selectedEmpId ? 'Atual' : (selectedTeam ? 'do Setor' : (selectedCompany ? 'da Empresa' : 'Global'))}</p>
@@ -374,10 +336,8 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
          </div>
       )}
 
-      {/* Charts Section */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         
-        {/* Chart 1: Company Overview */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
           <h3 className="text-lg font-semibold text-slate-800 mb-4">Horas por Empresa</h3>
           <div className="h-80 w-full">
@@ -410,7 +370,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
           </div>
         </div>
 
-        {/* Chart 3: Proportion Pie Chart */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
           <h3 className="text-lg font-semibold text-slate-800 mb-4">Proporção Geral (Crédito vs Débito)</h3>
           <div className="h-80 w-full">
@@ -437,7 +396,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
           </div>
         </div>
 
-        {/* Chart 2: Sector/Employee Drilldown - Full Width */}
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 lg:col-span-2">
           <h3 className="text-lg font-semibold text-slate-800 mb-4">
              {selectedEmpId 

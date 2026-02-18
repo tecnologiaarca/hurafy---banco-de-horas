@@ -1,31 +1,36 @@
 import React, { useState } from 'react';
-import { Plus, Trash2, Search, User, Shield, Briefcase, Edit, Loader2, Building2, Save } from 'lucide-react';
-import { Employee, Role } from '../types';
-import { TEAMS, COMPANIES } from '../constants';
+import { Plus, Trash2, Search, User, Shield, Briefcase, Edit, Loader2, Building2 } from 'lucide-react';
+import { Employee, Role, AppSetting } from '../types';
 import { firebaseService } from '../services/firebaseService';
 import { v4 as uuidv4 } from 'uuid';
 
 interface EmployeeListProps {
   employees: Employee[];
   refreshData: () => void;
-  currentUser: Employee; // Adicionado para verificação de segurança na UI
+  currentUser: Employee; 
+  companyList: AppSetting[];
+  teamList: AppSetting[];
 }
 
-const EmployeeList: React.FC<EmployeeListProps> = ({ employees, refreshData, currentUser }) => {
+const EmployeeList: React.FC<EmployeeListProps> = ({ 
+  employees, 
+  refreshData, 
+  currentUser,
+  companyList,
+  teamList
+}) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   
-  // Optimistic UI state
   const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
 
-  // Form State for Add/Edit Modal
   const [editingId, setEditingId] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
   const [newEmail, setNewEmail] = useState('');
   const [newRole, setNewRole] = useState<Role>(Role.EMPLOYEE);
-  const [newTeam, setNewTeam] = useState(TEAMS[0]);
-  const [newCompany, setNewCompany] = useState(COMPANIES[0]);
+  const [newTeam, setNewTeam] = useState('');
+  const [newCompany, setNewCompany] = useState('');
 
   const filteredEmployees = employees.filter(e => {
     if (deletedIds.has(e.id)) return false;
@@ -61,8 +66,8 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, refreshData, cur
     setNewName('');
     setNewEmail('');
     setNewRole(Role.EMPLOYEE);
-    setNewTeam(TEAMS[0]);
-    setNewCompany(COMPANIES[0]);
+    setNewTeam('');
+    setNewCompany('');
     setIsModalOpen(true);
   };
 
@@ -72,15 +77,18 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, refreshData, cur
     setNewEmail(employee.email || '');
     setNewRole(employee.role);
     setNewTeam(employee.team);
-    setNewCompany(employee.company || COMPANIES[0]);
+    setNewCompany(employee.company || '');
     setIsModalOpen(true);
   };
 
   const handleSaveEmployee = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!newCompany || !newTeam) {
+        alert("Por favor, selecione uma Empresa e uma Equipe (Área). Se as listas estiverem vazias, vá em Configurações.");
+        return;
+    }
     setLoadingAction('save');
     
-    // Gerador de username simples
     let finalUsername = '';
     if (newEmail && newEmail.includes('@')) {
          finalUsername = newEmail.split('@')[0];
@@ -156,7 +164,7 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, refreshData, cur
         <div className="flex gap-2">
           <button 
             onClick={openAddModal}
-            className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 flex items-center transition-colors shadow-sm"
+            className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 flex items-center transition-colors shadow-sm font-bold"
           >
             <Plus size={20} className="mr-2" />
             Novo Colaborador
@@ -164,7 +172,6 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, refreshData, cur
         </div>
       </div>
 
-      {/* Search Bar */}
       <div className="relative">
         <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
           <Search className="h-5 w-5 text-slate-400" />
@@ -178,7 +185,6 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, refreshData, cur
         />
       </div>
 
-      {/* List */}
       <div className="bg-white shadow-sm border border-slate-200 rounded-xl overflow-hidden">
         {employees.length === 0 ? (
            <div className="p-10 flex flex-col items-center justify-center text-slate-400">
@@ -191,7 +197,6 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, refreshData, cur
             <li key={employee.id} className="p-4 hover:bg-slate-50 transition-colors animate-fade-in">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 
-                {/* User Info */}
                 <div className="flex items-center min-w-0 gap-4 flex-1">
                   <div className="h-10 w-10 rounded-full bg-slate-200 flex items-center justify-center text-slate-500 shrink-0">
                     <User size={20} />
@@ -209,10 +214,8 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, refreshData, cur
                   </div>
                 </div>
                 
-                {/* Actions & Role Management */}
                 <div className="flex items-center gap-4 justify-between md:justify-end w-full md:w-auto">
                   
-                  {/* Role Selector (Admin Only) or Badge */}
                   <div className="flex flex-col items-end min-w-[140px]">
                     {isAdmin ? (
                         <div className="relative">
@@ -220,7 +223,7 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, refreshData, cur
                                 value={employee.role}
                                 disabled={loadingAction === `role-${employee.id}` || employee.id === currentUser.id}
                                 onChange={(e) => handleRoleChange(employee.id, e.target.value as Role)}
-                                className={`appearance-none block w-full pl-3 pr-8 py-1.5 text-xs font-medium rounded-full border focus:outline-none focus:ring-2 focus:ring-offset-1 transition-colors cursor-pointer
+                                className={`appearance-none block w-full pl-3 pr-8 py-1.5 text-xs font-medium rounded-full border focus:outline-none focus:ring-2 focus:ring-offset-1 transition-colors cursor-pointer text-slate-900
                                     ${employee.role === Role.ADMIN ? 'bg-purple-50 text-purple-700 border-purple-200 focus:ring-purple-500' : 
                                       employee.role === Role.LEADER ? 'bg-blue-50 text-blue-700 border-blue-200 focus:ring-blue-500' : 
                                       'bg-slate-50 text-slate-700 border-slate-200 focus:ring-slate-500'}
@@ -251,12 +254,11 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, refreshData, cur
                     )}
                   </div>
                   
-                  {/* Edit/Delete Buttons (Admin Only) */}
                   {isAdmin && (
                       <div className="flex items-center gap-1 border-l border-slate-200 pl-3 ml-2">
                         <button 
                           onClick={() => openEditModal(employee)}
-                          className="text-slate-400 hover:text-indigo-600 transition-colors p-2 rounded-full hover:bg-indigo-50"
+                          className="text-slate-400 hover:text-indigo-600 transition-colors p-2 rounded-full hover:bg-slate-100"
                           title="Editar Detalhes"
                           disabled={loadingAction !== null}
                         >
@@ -289,7 +291,6 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, refreshData, cur
         )}
       </div>
 
-      {/* Add/Edit Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 animate-fade-in-up flex flex-col max-h-[90vh]">
@@ -323,21 +324,33 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, refreshData, cur
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                  <div>
                     <label className="block text-sm font-medium text-slate-700">Empresa</label>
-                    <select className="mt-1 block w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 bg-slate-50 text-slate-900" value={newCompany} onChange={e => setNewCompany(e.target.value)}>
-                      {COMPANIES.map(c => <option key={c} value={c}>{c}</option>)}
+                    <select 
+                      className="mt-1 block w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 bg-slate-50 text-slate-900" 
+                      value={newCompany} 
+                      onChange={e => setNewCompany(e.target.value)}
+                    >
+                      <option value="">Selecione...</option>
+                      {companyList.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                     </select>
+                    {companyList.length === 0 && <span className="text-xs text-red-500">Nenhuma empresa cadastrada. Vá em Configurações.</span>}
                  </div>
                  <div>
-                    <label className="block text-sm font-medium text-slate-700">Equipe</label>
-                    <select className="mt-1 block w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 bg-slate-50 text-slate-900" value={newTeam} onChange={e => setNewTeam(e.target.value)}>
-                      {TEAMS.map(t => <option key={t} value={t}>{t}</option>)}
+                    <label className="block text-sm font-medium text-slate-700">Equipe (Área)</label>
+                    <select 
+                      className="mt-1 block w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 bg-slate-50 text-slate-900" 
+                      value={newTeam} 
+                      onChange={e => setNewTeam(e.target.value)}
+                    >
+                      <option value="">Selecione...</option>
+                      {teamList.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
                     </select>
+                    {teamList.length === 0 && <span className="text-xs text-red-500">Nenhuma área cadastrada. Vá em Configurações.</span>}
                  </div>
               </div>
 
               <div className="flex justify-end gap-3 mt-6 pt-2">
                 <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-slate-700 hover:bg-slate-100 rounded-lg">Cancelar</button>
-                <button type="submit" disabled={loadingAction === 'save'} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center">
+                <button type="submit" disabled={loadingAction === 'save'} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center font-bold">
                   {loadingAction === 'save' && <Loader2 size={16} className="animate-spin mr-2" />}
                   {editingId ? 'Salvar Alterações' : 'Criar Perfil'}
                 </button>

@@ -13,6 +13,7 @@ interface TimeEntryFormProps {
 const OCCURRENCE_OPTIONS = [
   { label: 'BH Positivo', type: RecordType.CREDIT },
   { label: 'BH Negativo', type: RecordType.DEBIT },
+  { label: 'Ajuste de Ponto', type: RecordType.NEUTRAL },
   { label: 'Compensação de horas positivas', type: RecordType.DEBIT },
   { label: 'Falta do dia inteiro', type: RecordType.DEBIT },
   { label: 'Ausência de Batida', type: RecordType.NEUTRAL },
@@ -33,7 +34,6 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
   // Time Calculation State
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
-  // New state specifically for single-time entry (Ausência)
   const [absenceTime, setAbsenceTime] = useState('');
 
   const [calculatedDuration, setCalculatedDuration] = useState({ hours: 0, minutes: 0 });
@@ -48,10 +48,8 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Verifica se é uma regularização de ausência (impacto zero)
-  const isAbsenceAdjustment = occurrenceType === 'Ausência de Batida';
+  const isAbsenceAdjustment = ['Ausência de Batida', 'Ajuste de Ponto'].includes(occurrenceType);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
@@ -62,7 +60,6 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Set current user default selection logic
   useEffect(() => {
     if (currentUser.role === Role.EMPLOYEE) {
        setSelectedEmployee(currentUser.id);
@@ -70,13 +67,11 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
     }
   }, [currentUser]);
 
-  // Update Mapped Record Type when Occurrence Selection Changes
   useEffect(() => {
     const option = OCCURRENCE_OPTIONS.find(o => o.label === occurrenceType);
     if (option) {
       setMappedRecordType(option.type);
     }
-    // Limpa campos de tempo ao trocar o tipo para evitar confusão
     setStartTime('');
     setEndTime('');
     setAbsenceTime('');
@@ -84,12 +79,31 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
     setIsTimeValid(true);
   }, [occurrenceType]);
 
-  // Calculate duration whenever standard times change
   useEffect(() => {
     if (isAbsenceAdjustment) {
-        // Se for ausência, a duração é sempre 0
         setCalculatedDuration({ hours: 0, minutes: 0 });
-        setIsTimeValid(!!absenceTime);
+        if (absenceTime) {
+            setIsTimeValid(true);
+            return;
+        }
+        if (startTime && endTime) {
+             const [startH, startM] = startTime.split(':').map(Number);
+             const [endH, endM] = endTime.split(':').map(Number);
+             const startTotalMins = startH * 60 + startM;
+             const endTotalMins = endH * 60 + endM;
+
+             if (startTotalMins === endTotalMins) {
+                 setIsTimeValid(true);
+                 return;
+             }
+             if (endTotalMins < startTotalMins) {
+                 setIsTimeValid(false);
+                 return;
+             }
+             setIsTimeValid(true);
+             return;
+        }
+        setIsTimeValid(false); 
         return;
     }
 
@@ -101,7 +115,6 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
 
     const [startH, startM] = startTime.split(':').map(Number);
     const [endH, endM] = endTime.split(':').map(Number);
-
     const startTotalMins = startH * 60 + startM;
     const endTotalMins = endH * 60 + endM;
 
@@ -130,25 +143,31 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Validação Básica
     if (!selectedEmployee || !date || !reason) {
         alert("Preencha todos os campos obrigatórios.");
         return;
     }
 
-    // Validação Específica para Ausência
     if (isAbsenceAdjustment) {
-        if (!absenceTime) {
-            alert("Informe o horário do esquecimento.");
+        const hasSpecificTime = !!absenceTime;
+        const hasRange = !!(startTime && endTime);
+
+        if (!hasSpecificTime && !hasRange) {
+            alert("Informe o horário.");
             return;
         }
+
+        if (hasRange && startTime === endTime) {
+        } else if (hasRange && !isTimeValid) {
+           alert("Horário inválido.");
+           return;
+        }
+
         if (reason.trim().length < 5) {
-            alert("A justificativa é obrigatória e deve ser detalhada para regularizações.");
+            alert("A justificativa é obrigatória e deve ser detalhada.");
             return;
         }
     } else {
-        // Validação Padrão
         if (!startTime || !endTime || !isTimeValid) {
             alert("Verifique os horários de início e fim.");
             return;
@@ -162,11 +181,8 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
     setLoading(true);
     
     const employee = employees.find(e => e.id === selectedEmployee);
-    
-    // Configura os horários baseados no tipo
-    // REGRA DE NEGÓCIO: Se for Ausência, Entrada = Saída (Saldo 0)
-    const finalStartTime = isAbsenceAdjustment ? absenceTime : startTime;
-    const finalEndTime = isAbsenceAdjustment ? absenceTime : endTime;
+    const finalStartTime = (isAbsenceAdjustment && absenceTime) ? absenceTime : startTime;
+    const finalEndTime = (isAbsenceAdjustment && absenceTime) ? absenceTime : endTime;
     
     const newRecord: TimeRecord = {
       id: uuidv4(),
@@ -188,11 +204,8 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
 
     try {
       await firebaseService.saveTimeRecord(newRecord);
-      
       setSuccess(true);
       onRecordAdded();
-      
-      // Reset Form
       if (currentUser.role !== Role.EMPLOYEE) {
          setSelectedEmployee('');
          setSearchTerm('');
@@ -203,7 +216,6 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
       setReason('');
       setCalculatedDuration({ hours: 0, minutes: 0 });
       setOccurrenceType('BH Positivo');
-      
       setTimeout(() => setSuccess(false), 3000);
     } catch (error) {
       console.error("Erro ao salvar batida:", error);
@@ -229,7 +241,6 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
   return (
     <div className="max-w-2xl mx-auto animate-fade-in">
       
-      {/* SUCCESS POPUP MODAL */}
       {success && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-fade-in">
           <div className="bg-white rounded-2xl shadow-2xl p-8 flex flex-col items-center max-w-sm w-full mx-4 transform transition-all scale-100">
@@ -239,7 +250,7 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
             <h3 className="text-2xl font-bold text-slate-800 mb-2">Sucesso!</h3>
             <p className="text-slate-600 text-center">
               {isAbsenceAdjustment 
-                ? 'Regularização registrada. Saldo inalterado.' 
+                ? 'Ajuste registrado. Saldo inalterado.' 
                 : 'Registro salvo no banco de dados.'}
             </p>
           </div>
@@ -258,7 +269,6 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
         <form onSubmit={handleSubmit} className="p-8 space-y-6">
           
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Employee Autocomplete */}
             <div className="col-span-1 md:col-span-2 relative" ref={dropdownRef}>
               <label className="block text-sm font-medium text-slate-700 mb-2">Colaborador</label>
               <div className="relative">
@@ -277,11 +287,11 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
                   }}
                   onFocus={() => setIsDropdownOpen(true)}
                   placeholder="Buscar colaborador..."
-                  className={`block w-full pl-10 pr-10 py-3 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-lg border bg-slate-50 text-slate-900 placeholder-slate-400 ${selectedEmployee ? 'border-green-500 ring-1 ring-green-500 bg-green-50' : ''} ${currentUser.role === Role.EMPLOYEE ? 'bg-slate-100 cursor-not-allowed text-slate-500' : ''}`}
+                  className={`block w-full pl-10 pr-10 py-3 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-lg border bg-slate-50 text-slate-900 placeholder-slate-400 ${selectedEmployee ? 'border-indigo-600 ring-1 ring-indigo-600 bg-indigo-50' : ''} ${currentUser.role === Role.EMPLOYEE ? 'bg-slate-100 cursor-not-allowed text-slate-500' : ''}`}
                 />
                 <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
                    {selectedEmployee ? (
-                     <div className="text-green-600 bg-green-100 rounded-full p-0.5">
+                     <div className="text-indigo-600 bg-indigo-100 rounded-full p-0.5">
                         <Check size={14} strokeWidth={3} />
                      </div>
                    ) : (
@@ -290,7 +300,6 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
                 </div>
               </div>
 
-              {/* Dropdown List */}
               {isDropdownOpen && currentUser.role !== Role.EMPLOYEE && (
                 <div className="absolute z-10 mt-1 w-full bg-white shadow-xl max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none sm:text-sm">
                   {filteredEmployees.length > 0 ? (
@@ -321,7 +330,6 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
               )}
             </div>
 
-            {/* Date */}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-2">Data da Ocorrência</label>
               <div className="relative">
@@ -338,7 +346,6 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
               </div>
             </div>
 
-            {/* Type Dropdown */}
             <div>
                <label className="block text-sm font-medium text-slate-700 mb-2">Tipo de Ocorrência</label>
                <div className="relative">
@@ -353,17 +360,14 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
                  </select>
                </div>
                
-               {/* Visual Indicator of Effect */}
                <div className={`mt-2 p-2 rounded-lg border text-xs font-semibold flex items-center justify-center ${getTypeStyles(mappedRecordType)}`}>
                   {mappedRecordType === RecordType.CREDIT && <span className="flex items-center"><Check size={14} className="mr-1"/> Adiciona ao Banco de Horas (Crédito)</span>}
                   {mappedRecordType === RecordType.DEBIT && <span className="flex items-center"><AlertTriangle size={14} className="mr-1"/> Desconta do Banco de Horas (Débito)</span>}
-                  {mappedRecordType === RecordType.NEUTRAL && <span className="flex items-center"><Info size={14} className="mr-1"/> Informativo (Não altera o saldo)</span>}
+                  {mappedRecordType === RecordType.NEUTRAL && <span className="flex items-center"><Info size={14} className="mr-1"/> Informativo / Neutro (0h)</span>}
                </div>
             </div>
 
-            {/* Conditional Time Inputs */}
-            {isAbsenceAdjustment ? (
-                // --- MODO REGULARIZAÇÃO (AUSÊNCIA) ---
+            {occurrenceType === 'Ausência de Batida' ? (
                 <div className="col-span-1 md:col-span-2 animate-fade-in">
                     <label className="block text-sm font-medium text-slate-700 mb-2">Horário do Esquecimento</label>
                     
@@ -393,7 +397,6 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
                     </div>
                 </div>
             ) : (
-                // --- MODO PADRÃO (INTERVALO) ---
                 <div className="col-span-1 md:col-span-2">
                   <label className="block text-sm font-medium text-slate-700 mb-2">Período da Atividade</label>
                   <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -418,13 +421,12 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
                       />
                     </div>
                     
-                    {/* Duration Result */}
                     <div className="col-span-1 sm:col-span-2 mt-2 pt-4 border-t border-slate-200 flex items-center justify-between">
                       <div className="flex items-center text-slate-600">
                         <Calculator size={18} className="mr-2" />
                         <span className="text-sm font-medium">Tempo Calculado:</span>
                       </div>
-                      <div className={`text-lg font-bold ${!isTimeValid ? 'text-red-500' : 'text-indigo-600'}`}>
+                      <div className={`text-lg font-bold ${!isTimeValid ? 'text-red-500' : 'text-slate-800'}`}>
                         {!isTimeValid ? (
                           <span className="text-sm">Horário Inválido</span>
                         ) : (
@@ -433,7 +435,7 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
                       </div>
                     </div>
                   </div>
-                  {!isTimeValid && (
+                  {!isTimeValid && !isAbsenceAdjustment && (
                     <p className="text-xs text-red-500 mt-1">A hora de término deve ser posterior à hora de início.</p>
                   )}
                 </div>
@@ -441,7 +443,6 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
 
           </div>
 
-          {/* Reason */}
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-2">
               Justificativa {isAbsenceAdjustment && <span className="text-red-500">* (Obrigatório)</span>}
@@ -451,7 +452,7 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
               rows={3}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder={isAbsenceAdjustment ? "Explique detalhadamente o motivo do esquecimento..." : "Detalhes adicionais..."}
+              placeholder={isAbsenceAdjustment ? "Explique detalhadamente o motivo do ajuste..." : "Detalhes adicionais..."}
               className={`block w-full px-3 py-3 border rounded-lg bg-slate-50 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-slate-900 ${isAbsenceAdjustment && !reason ? 'border-amber-300 ring-1 ring-amber-300' : 'border-slate-300'}`}
             />
           </div>
@@ -470,7 +471,7 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
               ) : (
                 <span className="flex items-center">
                   <Save className="mr-2" size={20} />
-                  {isAbsenceAdjustment ? 'Regularizar Ponto' : 'Registrar Batida'}
+                  {isAbsenceAdjustment ? 'Registrar Ajuste' : 'Registrar Batida'}
                 </span>
               )}
             </button>

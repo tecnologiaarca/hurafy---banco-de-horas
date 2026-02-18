@@ -4,8 +4,10 @@ import Dashboard from './components/Dashboard';
 import TimeEntryForm from './components/TimeEntryForm';
 import EmployeeList from './components/EmployeeList';
 import Reports from './components/Reports';
+import BulkOccurrence from './components/BulkOccurrence';
+import Settings from './components/Settings';
 import Login from './components/Login';
-import { Role, Employee, TimeRecord } from './types';
+import { Role, Employee, TimeRecord, AppSetting } from './types';
 import { firebaseService } from './services/firebaseService';
 import { Menu } from 'lucide-react';
 import { onAuthStateChanged } from 'firebase/auth';
@@ -23,6 +25,11 @@ const App: React.FC = () => {
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [records, setRecords] = useState<TimeRecord[]>([]);
+  
+  // Settings State (Dynamic Lists)
+  const [companies, setCompanies] = useState<AppSetting[]>([]);
+  const [teams, setTeams] = useState<AppSetting[]>([]);
+
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // Authentication State
@@ -77,12 +84,26 @@ const App: React.FC = () => {
     if (currentUser) {
       try {
         console.log("Fetching data from Firestore...");
-        const emps = await firebaseService.getEmployees();
-        const recs = await firebaseService.getRecords();
+        
+        // Fetch Parallel
+        const [emps, recs, comps, areas] = await Promise.all([
+           firebaseService.getEmployees(),
+           firebaseService.getRecords(),
+           firebaseService.getSettingsList('settings_companies'),
+           firebaseService.getSettingsList('settings_areas')
+        ]);
 
         setEmployees(emps);
         setRecords(recs);
-        console.log("Data fetched successfully:", { employees: emps.length, records: recs.length });
+        setCompanies(comps);
+        setTeams(areas);
+        
+        console.log("Data fetched successfully:", { 
+          employees: emps.length, 
+          records: recs.length,
+          companies: comps.length,
+          areas: areas.length
+        });
       } catch (e) {
         console.error("Error fetching data:", e);
       }
@@ -157,12 +178,23 @@ const App: React.FC = () => {
           return <Dashboard records={records} employees={employees} />;
         case 'form':
           return <TimeEntryForm currentUser={currentUser} employees={employees} onRecordAdded={fetchData} />;
+        case 'bulk':
+          return currentUser.role === Role.ADMIN ? 
+            <BulkOccurrence 
+              employees={employees} 
+              currentUser={currentUser} 
+              onRecordsAdded={fetchData} 
+              companyList={companies}
+              teamList={teams}
+            /> : <div className="p-10 text-center text-slate-500">Acesso Restrito ao RH.</div>;
         case 'employees':
           return currentUser.role === Role.ADMIN ? 
             <EmployeeList 
               employees={employees} 
               refreshData={fetchData} 
               currentUser={currentUser}
+              companyList={companies}
+              teamList={teams}
             /> : 
             <div className="text-center p-10 text-slate-500">Acesso negado. Esta área é restrita ao RH.</div>;
         case 'reports':
@@ -174,6 +206,15 @@ const App: React.FC = () => {
               refreshData={fetchData} 
               onUpdateRecord={handleLocalRecordUpdate}
               onDeleteRecord={handleLocalRecordDelete}
+            /> : 
+            <div className="text-center p-10 text-slate-500">Acesso negado.</div>;
+        case 'settings':
+          return currentUser.role === Role.ADMIN ? 
+            <Settings 
+               companies={companies}
+               teams={teams}
+               employees={employees} // Passed for migration logic
+               refreshData={fetchData}
             /> : 
             <div className="text-center p-10 text-slate-500">Acesso negado.</div>;
         default:
