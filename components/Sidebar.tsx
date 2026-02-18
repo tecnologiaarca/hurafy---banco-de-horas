@@ -58,7 +58,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentRole, currentPage
               <button
                 key={item.id}
                 onClick={() => setPage(item.id)}
-                className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors duration-200 group ${
+                className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors duration-200 group flex-nowrap ${
                   isActive 
                     ? 'bg-indigo-600 text-white shadow-lg' 
                     : 'text-slate-400 hover:bg-slate-800 hover:text-white'

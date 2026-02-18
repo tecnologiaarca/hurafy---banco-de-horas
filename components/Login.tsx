@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AlertCircle, Lock, Mail, ShieldCheck, CheckCircle } from 'lucide-react';
 import { firebaseService } from '../services/firebaseService';
 import { Employee } from '../types';
@@ -16,11 +16,21 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
 
+  // Limpa mensagens automaticamente após 5 segundos
+  useEffect(() => {
+    if (error || successMsg) {
+      const timer = setTimeout(() => {
+        setError('');
+        setSuccessMsg('');
+      }, 5000);
+      return () => clearTimeout(timer);
+    }
+  }, [error, successMsg]);
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) {
       setError('Preencha todos os campos.');
-      setTimeout(() => setError(''), 5000);
       return;
     }
 
@@ -35,11 +45,9 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
         onLoginSuccess(result.user);
       } else {
         setError(result.message || 'Credenciais inválidas.');
-        setTimeout(() => setError(''), 5000);
       }
     } catch (err: any) {
       setError('Erro inesperado. Verifique o console.');
-      setTimeout(() => setError(''), 5000);
       console.error(err);
     } finally {
       setLoading(false);
@@ -49,7 +57,6 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
   const handleForgotPassword = async () => {
     if (!email) {
       setError('Por favor, digite seu e-mail no campo acima para recuperar a senha.');
-      setTimeout(() => setError(''), 5000);
       return;
     }
 
@@ -61,14 +68,11 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
       const result = await firebaseService.sendPasswordReset(email);
       if (result.success) {
         setSuccessMsg(result.message);
-        setTimeout(() => setSuccessMsg(''), 5000);
       } else {
         setError(result.message);
-        setTimeout(() => setError(''), 5000);
       }
     } catch (err) {
       setError('Erro ao enviar solicitação.');
-      setTimeout(() => setError(''), 5000);
     } finally {
       setResetLoading(false);
     }

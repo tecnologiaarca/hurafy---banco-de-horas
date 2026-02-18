@@ -263,6 +263,13 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
   const handleUpdateRecord = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingRecord || !isEditTimeValid) return;
+
+    // --- TRAVA DE JUSTIFICATIVA ---
+    if (!editReason || !editReason.trim()) {
+      alert('A justificativa é obrigatória para editar um registro.');
+      return;
+    }
+
     if (editCalculatedDuration.hours === 0 && editCalculatedDuration.minutes === 0) {
       alert("Duração inválida ou zerada.");
       return;
@@ -781,16 +788,29 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
       {isEditModalOpen && editingRecord && (
          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 animate-fade-in-up flex flex-col max-h-[90vh]">
+               {isBatchEdit && (
+                    <div className="mb-4 bg-red-50 border-l-4 border-red-500 p-4">
+                        <div className="flex">
+                            <div className="flex-shrink-0">
+                                <AlertTriangle className="h-5 w-5 text-red-500" aria-hidden="true" />
+                            </div>
+                            <div className="ml-3">
+                                <p className="text-sm text-red-700 font-bold">
+                                    Atenção: Você está editando um LANÇAMENTO EM MASSA.
+                                </p>
+                                <p className="text-xs text-red-600 mt-1">
+                                    As alterações afetarão todos os colaboradores deste grupo.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+               )}
                <div className="flex justify-between items-start mb-4">
                   <div>
                     <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                         {isBatchEdit ? <><Layers size={20} className="text-indigo-600"/> Editar Lote Completo</> : 'Editar Lançamento'}
                     </h3>
-                    {isBatchEdit ? (
-                        <p className="text-sm text-indigo-700 mt-1 font-medium bg-indigo-50 px-2 py-1 rounded-lg inline-block">
-                            Alterações serão aplicadas para todos os colaboradores deste lote.
-                        </p>
-                    ) : (
+                    {!isBatchEdit && (
                         <p className="text-sm text-slate-500">{editingRecord.employeeName}</p>
                     )}
                   </div>
@@ -807,9 +827,9 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
                   <div><label className="block text-sm font-medium text-slate-700">Justificativa</label><textarea required rows={3} value={editReason} onChange={e => setEditReason(e.target.value)} className="mt-1 block w-full border border-slate-300 rounded-lg px-3 py-2 bg-slate-50 text-slate-900"/></div>
                   <div className="flex justify-end gap-3 pt-2">
                      <button type="button" onClick={() => setIsEditModalOpen(false)} className="px-4 py-2 text-slate-700 hover:bg-slate-100 rounded-lg">Cancelar</button>
-                     <button type="submit" disabled={loadingAction === 'modal-save' || !isEditTimeValid} className={`px-4 py-2 text-white rounded-lg flex items-center shadow-lg ${isBatchEdit ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
+                     <button type="submit" disabled={loadingAction === 'modal-save' || !isEditTimeValid} className={`px-4 py-2 text-white rounded-lg flex items-center shadow-lg ${isBatchEdit ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
                         {loadingAction === 'modal-save' ? <Loader2 size={16} className="animate-spin mr-2"/> : <Save size={16} className="mr-2"/>}
-                        {isBatchEdit ? 'Atualizar Lote' : 'Salvar Alterações'}
+                        {isBatchEdit ? 'Confirmar Edição em Lote' : 'Salvar Alterações'}
                      </button>
                   </div>
                </form>
