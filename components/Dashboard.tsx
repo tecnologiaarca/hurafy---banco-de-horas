@@ -1,11 +1,9 @@
-import React, { useMemo, useState, useRef } from 'react';
+import React, { useMemo, useState } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, PieChart, Pie, Legend 
 } from 'recharts';
-import { Clock, Users, TrendingUp, TrendingDown, Info, Filter, X, Briefcase, Building2, Database, Upload, Download, Trash2, FileSpreadsheet, Loader2 } from 'lucide-react';
+import { Clock, Users, TrendingUp, TrendingDown, Info, Filter, X, Briefcase, Building2 } from 'lucide-react';
 import { TimeRecord, Employee, RecordType } from '../types';
-import { firebaseService } from '../services/firebaseService';
-import { auth } from '../lib/firebase';
 
 interface DashboardProps {
   records: TimeRecord[];
@@ -17,134 +15,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
   const [selectedTeam, setSelectedTeam] = useState<string>('');
   const [selectedEmpId, setSelectedEmpId] = useState<string>('');
   
-  // Data Management State
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [statusMessage, setStatusMessage] = useState<string>('');
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // --- MANAGEMENT TOOLS LOGIC ---
-
-  const handleDownloadTemplate = () => {
-    console.log("📥 Gerando modelo CSV...");
-    // Header + Example
-    const content = "id,name,role,department,company\na.exemplo,Usuario Exemplo,EMPLOYEE,Financeiro,Arca Plast";
-    
-    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.setAttribute("download", "modelo_colaboradores.csv");
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    console.log("✅ Download iniciado.");
-  };
-
-  const handleResetDatabase = async () => {
-    const currentUser = auth.currentUser;
-    if (!currentUser) {
-        console.error("Usuário não autenticado. Ação abortada.");
-        return;
-    }
-
-    setIsProcessing(true);
-    setStatusMessage("Limpando banco de dados...");
-    
-    try {
-      await firebaseService.deleteAllEmployees(currentUser.email || '');
-      // Recarrega a página após 1.5s para refletir mudanças
-      setTimeout(() => {
-          window.location.reload();
-      }, 1500);
-    } catch (e) {
-      console.error("Erro na limpeza:", e);
-      setStatusMessage("Erro ao limpar banco (ver console).");
-      setIsProcessing(false);
-    }
-  };
-
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    
-    reader.onload = async (e) => {
-      const text = e.target?.result as string;
-      if (!text) return;
-
-      setIsProcessing(true);
-      setStatusMessage("Processando arquivo...");
-      console.log("📂 Arquivo carregado. Iniciando leitura...");
-      
-      try {
-        const lines = text.split(/\r\n|\n/);
-        const usersToImport: any[] = [];
-        
-        // Começa do index 1 para pular o cabeçalho
-        for (let i = 1; i < lines.length; i++) {
-          const line = lines[i].trim();
-          if (!line) continue;
-          
-          // CSV simples: id,name,role,department,company
-          const cols = line.split(',');
-          if (cols.length < 5) {
-             console.warn(`⚠️ Linha ${i + 1} incompleta/ignorada:`, line);
-             continue;
-          }
-
-          const [id, name, role, department, company] = cols.map(c => c.trim());
-          
-          // Validação básica de Role
-          const validRoles = ['ADMIN', 'LEADER', 'EMPLOYEE'];
-          const cleanRole = validRoles.includes(role.toUpperCase()) ? role.toUpperCase() : 'EMPLOYEE';
-
-          usersToImport.push({
-            id,
-            name,
-            role: cleanRole,
-            department,
-            company
-          });
-        }
-
-        if (usersToImport.length === 0) {
-          console.error("Nenhum dado válido encontrado.");
-          setStatusMessage("Arquivo inválido ou vazio.");
-          setIsProcessing(false);
-          return;
-        }
-
-        console.log(`📋 ${usersToImport.length} registros prontos para envio.`);
-        const success = await firebaseService.importAllColaboradores(usersToImport);
-        
-        if (success) {
-          setStatusMessage("Importação concluída!");
-          setTimeout(() => {
-             window.location.reload();
-          }, 1500);
-        } else {
-            setStatusMessage("Falha na importação.");
-            setIsProcessing(false);
-        }
-
-      } catch (error) {
-        console.error("Erro no processamento:", error);
-        setStatusMessage("Erro fatal (ver console).");
-        setIsProcessing(false);
-      } finally {
-        // Reset input para permitir selecionar o mesmo arquivo novamente se falhar
-        if (fileInputRef.current) fileInputRef.current.value = '';
-      }
-    };
-
-    reader.readAsText(file);
-  };
-
-  const triggerFileInput = () => {
-    fileInputRef.current?.click();
-  };
-
   // --- EXISTING DASHBOARD LOGIC ---
 
   // 1. Extract Unique Companies
@@ -330,66 +200,6 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
   return (
     <div className="space-y-6 animate-fade-in">
       
-      {/* --- MANAGEMENT TOOLS SECTION --- */}
-      <div className="bg-slate-800 text-white rounded-xl shadow-md overflow-hidden">
-         <div className="p-4 border-b border-slate-700 flex justify-between items-center">
-            <div className="flex items-center gap-2">
-               <Database className="text-indigo-400" />
-               <h3 className="font-bold">Ferramentas de Gestão</h3>
-            </div>
-            {statusMessage && (
-               <span className="text-sm bg-indigo-600 px-3 py-1 rounded-full animate-pulse">
-                  {statusMessage}
-               </span>
-            )}
-         </div>
-         
-         <div className="p-4 flex flex-wrap gap-3 items-center">
-             {/* 1. Download Template */}
-             <button 
-                onClick={handleDownloadTemplate}
-                className="flex items-center px-4 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-lg text-sm font-medium transition-colors"
-             >
-                <FileSpreadsheet size={16} className="mr-2" />
-                Baixar Modelo CSV
-             </button>
-
-             {/* 2. Import CSV */}
-             <input 
-               type="file" 
-               accept=".csv" 
-               ref={fileInputRef} 
-               className="hidden" 
-               onChange={handleFileSelect} 
-             />
-             <button 
-                onClick={triggerFileInput}
-                disabled={isProcessing}
-                className={`flex items-center px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium transition-colors ${isProcessing ? 'opacity-50 cursor-wait' : ''}`}
-             >
-                {isProcessing ? <Loader2 className="mr-2 animate-spin" size={16}/> : <Upload size={16} className="mr-2" />}
-                Importar CSV
-             </button>
-
-             {/* 3. Reset Database */}
-             <div className="h-6 w-px bg-slate-600 mx-2 hidden sm:block"></div>
-             
-             <button 
-                onClick={handleResetDatabase}
-                disabled={isProcessing}
-                className="flex items-center px-4 py-2 bg-red-900/50 hover:bg-red-800 text-red-200 border border-red-800/50 rounded-lg text-sm font-medium transition-colors"
-                title="Apagar dados (verifique o console para logs)"
-             >
-                {isProcessing ? <Loader2 className="mr-2 animate-spin" size={16}/> : <Trash2 size={16} className="mr-2" />}
-                Resetar Banco
-             </button>
-             
-             <div className="ml-auto text-xs text-slate-400 italic">
-               * Verifique o console do navegador (F12) para detalhes.
-             </div>
-         </div>
-      </div>
-
       {/* Header with Filters */}
       <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4">
         <div>

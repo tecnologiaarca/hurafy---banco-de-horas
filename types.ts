@@ -36,6 +36,8 @@ export interface TimeRecord {
   reason: string;
   createdAt: string;
   createdBy: string; // Leader ID
+  status?: string; // 'regularized' or undefined
+  isAdjustment?: boolean; // New field for zero-impact adjustments
 }
 
 export interface DashboardStats {

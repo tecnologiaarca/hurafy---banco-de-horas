@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Save, AlertTriangle, Calendar, Clock, User, ChevronDown, Check, Calculator, Info, Loader2 } from 'lucide-react';
+import { Save, AlertTriangle, Calendar, Clock, User, ChevronDown, Check, Calculator, Info, Loader2, ShieldAlert } from 'lucide-react';
 import { Employee, RecordType, TimeRecord, Role } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { firebaseService } from '../services/firebaseService';
@@ -33,6 +33,9 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
   // Time Calculation State
   const [startTime, setStartTime] = useState('');
   const [endTime, setEndTime] = useState('');
+  // New state specifically for single-time entry (Ausência)
+  const [absenceTime, setAbsenceTime] = useState('');
+
   const [calculatedDuration, setCalculatedDuration] = useState({ hours: 0, minutes: 0 });
   const [isTimeValid, setIsTimeValid] = useState(true);
 
@@ -44,6 +47,9 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
   const [searchTerm, setSearchTerm] = useState('');
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Verifica se é uma regularização de ausência (impacto zero)
+  const isAbsenceAdjustment = occurrenceType === 'Ausência de Batida';
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -70,10 +76,23 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
     if (option) {
       setMappedRecordType(option.type);
     }
+    // Limpa campos de tempo ao trocar o tipo para evitar confusão
+    setStartTime('');
+    setEndTime('');
+    setAbsenceTime('');
+    setCalculatedDuration({ hours: 0, minutes: 0 });
+    setIsTimeValid(true);
   }, [occurrenceType]);
 
-  // Calculate duration whenever times change
+  // Calculate duration whenever standard times change
   useEffect(() => {
+    if (isAbsenceAdjustment) {
+        // Se for ausência, a duração é sempre 0
+        setCalculatedDuration({ hours: 0, minutes: 0 });
+        setIsTimeValid(!!absenceTime);
+        return;
+    }
+
     if (!startTime || !endTime) {
       setCalculatedDuration({ hours: 0, minutes: 0 });
       setIsTimeValid(true);
@@ -96,11 +115,9 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
       const m = diffMins % 60;
       setCalculatedDuration({ hours: h, minutes: m });
     }
-  }, [startTime, endTime]);
+  }, [startTime, endTime, absenceTime, isAbsenceAdjustment]);
 
-  const availableEmployees = employees;
-
-  const filteredEmployees = availableEmployees.filter(emp => 
+  const filteredEmployees = employees.filter(emp => 
     emp.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     emp.team.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -113,48 +130,76 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedEmployee || !date || !reason || !startTime || !endTime || !isTimeValid) return;
+    
+    // Validação Básica
+    if (!selectedEmployee || !date || !reason) {
+        alert("Preencha todos os campos obrigatórios.");
+        return;
+    }
 
-    if (calculatedDuration.hours === 0 && calculatedDuration.minutes === 0) {
-      alert("A duração deve ser maior que zero.");
-      return;
+    // Validação Específica para Ausência
+    if (isAbsenceAdjustment) {
+        if (!absenceTime) {
+            alert("Informe o horário do esquecimento.");
+            return;
+        }
+        if (reason.trim().length < 5) {
+            alert("A justificativa é obrigatória e deve ser detalhada para regularizações.");
+            return;
+        }
+    } else {
+        // Validação Padrão
+        if (!startTime || !endTime || !isTimeValid) {
+            alert("Verifique os horários de início e fim.");
+            return;
+        }
+        if (calculatedDuration.hours === 0 && calculatedDuration.minutes === 0) {
+            alert("A duração deve ser maior que zero.");
+            return;
+        }
     }
 
     setLoading(true);
     
     const employee = employees.find(e => e.id === selectedEmployee);
     
-    // Objeto de registro conforme estrutura do Firestore
+    // Configura os horários baseados no tipo
+    // REGRA DE NEGÓCIO: Se for Ausência, Entrada = Saída (Saldo 0)
+    const finalStartTime = isAbsenceAdjustment ? absenceTime : startTime;
+    const finalEndTime = isAbsenceAdjustment ? absenceTime : endTime;
+    
     const newRecord: TimeRecord = {
       id: uuidv4(),
       employeeId: selectedEmployee,
       employeeName: employee?.name || 'Desconhecido',
-      date, // Data da ocorrência (input do usuário)
-      hours: calculatedDuration.hours,
-      minutes: calculatedDuration.minutes,
-      startTime,
-      endTime,
-      type: mappedRecordType, // Crédito, Débito ou Neutro
+      date, 
+      hours: isAbsenceAdjustment ? 0 : calculatedDuration.hours,
+      minutes: isAbsenceAdjustment ? 0 : calculatedDuration.minutes,
+      startTime: finalStartTime,
+      endTime: finalEndTime,
+      type: isAbsenceAdjustment ? RecordType.NEUTRAL : mappedRecordType,
       occurrenceType,
       reason,
-      createdAt: new Date().toISOString(), // Data local para referência UI
-      createdBy: currentUser.id
+      createdAt: new Date().toISOString(),
+      createdBy: currentUser.id,
+      isAdjustment: isAbsenceAdjustment ? true : undefined,
+      status: isAbsenceAdjustment ? 'regularized' : undefined
     };
 
     try {
-      // Salva no Firestore usando o serviço dedicado
       await firebaseService.saveTimeRecord(newRecord);
       
       setSuccess(true);
-      onRecordAdded(); // Atualiza o dashboard/lista
+      onRecordAdded();
       
-      // Reset form
+      // Reset Form
       if (currentUser.role !== Role.EMPLOYEE) {
          setSelectedEmployee('');
          setSearchTerm('');
       }
       setStartTime('');
       setEndTime('');
+      setAbsenceTime('');
       setReason('');
       setCalculatedDuration({ hours: 0, minutes: 0 });
       setOccurrenceType('BH Positivo');
@@ -192,7 +237,11 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
               <Check size={32} className="text-green-600" strokeWidth={3} />
             </div>
             <h3 className="text-2xl font-bold text-slate-800 mb-2">Sucesso!</h3>
-            <p className="text-slate-600 text-center">Registro salvo no banco de dados.</p>
+            <p className="text-slate-600 text-center">
+              {isAbsenceAdjustment 
+                ? 'Regularização registrada. Saldo inalterado.' 
+                : 'Registro salvo no banco de dados.'}
+            </p>
           </div>
         </div>
       )}
@@ -303,6 +352,7 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
                    ))}
                  </select>
                </div>
+               
                {/* Visual Indicator of Effect */}
                <div className={`mt-2 p-2 rounded-lg border text-xs font-semibold flex items-center justify-center ${getTypeStyles(mappedRecordType)}`}>
                   {mappedRecordType === RecordType.CREDIT && <span className="flex items-center"><Check size={14} className="mr-1"/> Adiciona ao Banco de Horas (Crédito)</span>}
@@ -311,73 +361,106 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
                </div>
             </div>
 
-            {/* Time Range Calculation */}
-            <div className="col-span-1 md:col-span-2">
-              <label className="block text-sm font-medium text-slate-700 mb-2">Período da Atividade</label>
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1">Hora Início/Entrada</label>
-                  <input 
-                    type="time" 
-                    required
-                    value={startTime}
-                    onChange={(e) => setStartTime(e.target.value)}
-                    className="block w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 focus:ring-indigo-500 focus:border-indigo-500"
-                  />
+            {/* Conditional Time Inputs */}
+            {isAbsenceAdjustment ? (
+                // --- MODO REGULARIZAÇÃO (AUSÊNCIA) ---
+                <div className="col-span-1 md:col-span-2 animate-fade-in">
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Horário do Esquecimento</label>
+                    
+                    <div className="bg-amber-50 p-4 rounded-xl border border-amber-200">
+                        <div className="flex flex-col md:flex-row gap-4 items-center">
+                            <div className="w-full md:w-1/2">
+                                <label className="block text-xs font-semibold text-amber-700 mb-1">Hora da Batida</label>
+                                <input 
+                                  type="time" 
+                                  required
+                                  value={absenceTime}
+                                  onChange={(e) => setAbsenceTime(e.target.value)}
+                                  className="block w-full px-3 py-3 border border-amber-300 rounded-lg bg-white text-slate-900 focus:ring-amber-500 focus:border-amber-500 text-lg font-medium"
+                                />
+                            </div>
+                            
+                            <div className="w-full md:w-1/2 flex items-start gap-3 text-sm text-amber-800">
+                                <ShieldAlert className="shrink-0 w-8 h-8 text-amber-600" />
+                                <div>
+                                    <p className="font-bold">Regularização Detectada</p>
+                                    <p className="text-xs mt-1">
+                                        O sistema registrará <strong>entrada e saída simultâneas</strong> no horário informado para manter seu saldo inalterado.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-500 mb-1">Hora Fim/Saída</label>
-                  <input 
-                    type="time" 
-                    required
-                    value={endTime}
-                    onChange={(e) => setEndTime(e.target.value)}
-                    className={`block w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-indigo-500 focus:border-indigo-500 ${!isTimeValid ? 'border-red-500 ring-1 ring-red-500' : 'border-slate-300'}`}
-                  />
-                </div>
-                
-                {/* Duration Result */}
-                <div className="col-span-1 sm:col-span-2 mt-2 pt-4 border-t border-slate-200 flex items-center justify-between">
-                  <div className="flex items-center text-slate-600">
-                    <Calculator size={18} className="mr-2" />
-                    <span className="text-sm font-medium">Tempo Calculado:</span>
+            ) : (
+                // --- MODO PADRÃO (INTERVALO) ---
+                <div className="col-span-1 md:col-span-2">
+                  <label className="block text-sm font-medium text-slate-700 mb-2">Período da Atividade</label>
+                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-500 mb-1">Hora Início/Entrada</label>
+                      <input 
+                        type="time" 
+                        required
+                        value={startTime}
+                        onChange={(e) => setStartTime(e.target.value)}
+                        className="block w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 focus:ring-indigo-500 focus:border-indigo-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-500 mb-1">Hora Fim/Saída</label>
+                      <input 
+                        type="time" 
+                        required
+                        value={endTime}
+                        onChange={(e) => setEndTime(e.target.value)}
+                        className={`block w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-indigo-500 focus:border-indigo-500 ${!isTimeValid ? 'border-red-500 ring-1 ring-red-500' : 'border-slate-300'}`}
+                      />
+                    </div>
+                    
+                    {/* Duration Result */}
+                    <div className="col-span-1 sm:col-span-2 mt-2 pt-4 border-t border-slate-200 flex items-center justify-between">
+                      <div className="flex items-center text-slate-600">
+                        <Calculator size={18} className="mr-2" />
+                        <span className="text-sm font-medium">Tempo Calculado:</span>
+                      </div>
+                      <div className={`text-lg font-bold ${!isTimeValid ? 'text-red-500' : 'text-indigo-600'}`}>
+                        {!isTimeValid ? (
+                          <span className="text-sm">Horário Inválido</span>
+                        ) : (
+                           <span>{calculatedDuration.hours}h {calculatedDuration.minutes}m</span>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <div className={`text-lg font-bold ${!isTimeValid ? 'text-red-500' : 'text-indigo-600'}`}>
-                    {!isTimeValid ? (
-                      <span className="text-sm">Horário Inválido</span>
-                    ) : (
-                      <span>
-                        {calculatedDuration.hours}h {calculatedDuration.minutes}m
-                      </span>
-                    )}
-                  </div>
+                  {!isTimeValid && (
+                    <p className="text-xs text-red-500 mt-1">A hora de término deve ser posterior à hora de início.</p>
+                  )}
                 </div>
-              </div>
-              {!isTimeValid && (
-                <p className="text-xs text-red-500 mt-1">A hora de término deve ser posterior à hora de início.</p>
-              )}
-            </div>
+            )}
 
           </div>
 
           {/* Reason */}
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">Justificativa</label>
+            <label className="block text-sm font-medium text-slate-700 mb-2">
+              Justificativa {isAbsenceAdjustment && <span className="text-red-500">* (Obrigatório)</span>}
+            </label>
             <textarea
               required
               rows={3}
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder="Detalhes adicionais..."
-              className="block w-full px-3 py-3 border-slate-300 rounded-lg border bg-slate-50 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-slate-900"
+              placeholder={isAbsenceAdjustment ? "Explique detalhadamente o motivo do esquecimento..." : "Detalhes adicionais..."}
+              className={`block w-full px-3 py-3 border rounded-lg bg-slate-50 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-slate-900 ${isAbsenceAdjustment && !reason ? 'border-amber-300 ring-1 ring-amber-300' : 'border-slate-300'}`}
             />
           </div>
 
           <div className="pt-2">
             <button
               type="submit"
-              disabled={loading || !selectedEmployee || !isTimeValid || (calculatedDuration.hours === 0 && calculatedDuration.minutes === 0)}
-              className={`w-full flex justify-center py-4 px-4 border border-transparent rounded-xl shadow-sm text-base font-bold text-white transition-all ${loading || !selectedEmployee || !isTimeValid || (calculatedDuration.hours === 0 && calculatedDuration.minutes === 0) ? 'bg-slate-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500'}`}
+              disabled={loading || !selectedEmployee || (!isAbsenceAdjustment && !isTimeValid)}
+              className={`w-full flex justify-center py-4 px-4 border border-transparent rounded-xl shadow-sm text-base font-bold text-white transition-all ${loading || !selectedEmployee || (!isAbsenceAdjustment && !isTimeValid) ? 'bg-slate-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500'}`}
             >
               {loading ? (
                 <span className="flex items-center">
@@ -387,7 +470,7 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
               ) : (
                 <span className="flex items-center">
                   <Save className="mr-2" size={20} />
-                  Registrar Batida
+                  {isAbsenceAdjustment ? 'Regularizar Ponto' : 'Registrar Batida'}
                 </span>
               )}
             </button>

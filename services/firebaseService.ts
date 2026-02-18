@@ -18,7 +18,7 @@ import {
   writeBatch
 } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
-import { Employee, Role, TimeRecord } from '../types';
+import { Employee, Role, TimeRecord, RecordType } from '../types';
 
 export const firebaseService = {
   auth,
@@ -261,6 +261,22 @@ export const firebaseService = {
       ...record,
       timestamp: serverTimestamp()
     });
+  },
+
+  // Nova função para lançamentos manuais do RH
+  async saveManualOccurrence(occurrenceData: any): Promise<void> {
+    try {
+      // Reutiliza a estrutura de TimeRecord, mas mapeia campos específicos se necessário
+      // occurrenceData já deve vir formatado ou podemos formatar aqui
+      await setDoc(doc(db, 'time_records', occurrenceData.id), {
+        ...occurrenceData,
+        timestamp: serverTimestamp()
+      });
+      console.log("✅ Ocorrência manual salva com sucesso.");
+    } catch (e) {
+      console.error("Erro ao salvar ocorrência manual:", e);
+      throw e;
+    }
   },
 
   async getRecords(): Promise<TimeRecord[]> {

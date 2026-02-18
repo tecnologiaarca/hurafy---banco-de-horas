@@ -1,5 +1,5 @@
 import React from 'react';
-import { LayoutDashboard, FilePlus, Users, FileText, Settings, LogOut } from 'lucide-react';
+import { LayoutDashboard, FilePlus, Users, FileText, LogOut } from 'lucide-react';
 import { Role, Employee } from '../types';
 
 interface SidebarProps {
