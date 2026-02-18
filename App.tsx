@@ -6,8 +6,9 @@ import EmployeeList from './components/EmployeeList';
 import Reports from './components/Reports';
 import Login from './components/Login';
 import { Role, Employee, TimeRecord } from './types';
-import { sheetService } from './services/sheetService';
+import { firebaseService } from './services/firebaseService';
 import { Menu } from 'lucide-react';
+import { onAuthStateChanged } from 'firebase/auth';
 
 const App: React.FC = () => {
   // Application State
@@ -17,23 +18,45 @@ const App: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   // Authentication State
-  // Initialize from localStorage if available to persist session on refresh
-  const [currentUser, setCurrentUser] = useState<Employee | null>(() => {
-    try {
-      const savedUser = localStorage.getItem('hurafy_session_user');
-      return savedUser ? JSON.parse(savedUser) : null;
-    } catch (error) {
-      console.error("Error parsing session user:", error);
-      return null;
-    }
-  });
+  const [currentUser, setCurrentUser] = useState<Employee | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
 
-  // Load Data function (Called after login and on updates)
+  // Load User Session Persistent
+  useEffect(() => {
+    if (!firebaseService.auth) {
+      setAuthChecked(true);
+      return;
+    }
+
+    const unsubscribe = onAuthStateChanged(firebaseService.auth, async (user) => {
+      if (user) {
+        // Se existe sessão no Firebase, carrega o perfil completo do Firestore
+        try {
+          const profile = await firebaseService.getOrCreateProfile(user);
+          setCurrentUser(profile);
+          // Opcional: Manter página se reload
+        } catch (e) {
+          console.error("Error loading profile:", e);
+          setCurrentUser(null);
+        }
+      } else {
+        setCurrentUser(null);
+      }
+      setAuthChecked(true);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Load Data function
   const fetchData = async () => {
-    // Only fetch if logged in to save API calls
     if (currentUser) {
-      const emps = await sheetService.getEmployees();
-      const recs = await sheetService.getRecords();
+      // Carrega colaboradores
+      const emps = await firebaseService.getEmployees();
+      
+      // Carrega registros (Admin vê tudo, Líder vê tudo para relatórios/dashboard por enquanto, ou podemos filtrar no backend)
+      // Para manter a paridade com o Dashboard atual que filtra no frontend, pegamos tudo.
+      const recs = await firebaseService.getRecords();
 
       setEmployees(emps);
       setRecords(recs);
@@ -47,32 +70,31 @@ const App: React.FC = () => {
   }, [currentUser]);
 
   const handleLoginSuccess = (user: Employee) => {
-    // Save to localStorage
-    localStorage.setItem('hurafy_session_user', JSON.stringify(user));
     setCurrentUser(user);
-    // Reset page to dashboard on login
     setCurrentPage('dashboard');
   };
 
-  const handleLogout = () => {
-    // Clear localStorage
-    localStorage.removeItem('hurafy_session_user');
+  const handleLogout = async () => {
+    await firebaseService.logout();
     setCurrentUser(null);
     setEmployees([]);
     setRecords([]);
   };
 
-  // Optimistic Update Helper
+  // Optimistic Update Helpers (UI only, data refreshed via refreshData typically)
   const handleLocalRecordUpdate = (updatedRecord: TimeRecord) => {
     setRecords(prevRecords => 
       prevRecords.map(r => r.id === updatedRecord.id ? updatedRecord : r)
     );
   };
 
-  // Optimistic Delete Helper
   const handleLocalRecordDelete = (recordId: string) => {
     setRecords(prevRecords => prevRecords.filter(r => r.id !== recordId));
   };
+
+  if (!authChecked) {
+    return <div className="h-screen flex items-center justify-center bg-slate-100">Carregando...</div>;
+  }
 
   // If not logged in, show Login Screen
   if (!currentUser) {
@@ -89,7 +111,6 @@ const App: React.FC = () => {
       case 'employees':
         return currentUser.role === Role.ADMIN ? <EmployeeList employees={employees} refreshData={fetchData} /> : <div className="text-center p-10 text-slate-500">Acesso negado. Esta área é restrita ao RH.</div>;
       case 'reports':
-        // Acesso permitido para ADMIN e LEADER
         return (currentUser.role === Role.ADMIN || currentUser.role === Role.LEADER) ? 
           <Reports 
             records={records} 

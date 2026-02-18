@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Plus, Trash2, Search, User, Shield, Briefcase, Edit, Loader2, Lock, Building2 } from 'lucide-react';
 import { Employee, Role } from '../types';
 import { TEAMS, COMPANIES } from '../constants';
-import { sheetService } from '../services/sheetService';
+import { firebaseService } from '../services/firebaseService';
 import { v4 as uuidv4 } from 'uuid';
 
 interface EmployeeListProps {
@@ -23,13 +23,11 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, refreshData }) =
   const [newName, setNewName] = useState('');
   const [newUsername, setNewUsername] = useState('');
   const [newEmail, setNewEmail] = useState('');
-  const [newPassword, setNewPassword] = useState('');
+  // Password logic removed from this specific UI as Firebase handles auth separately,
+  // but we keep the concept of creating the employee profile.
   const [newRole, setNewRole] = useState<Role>(Role.EMPLOYEE);
   const [newTeam, setNewTeam] = useState(TEAMS[0]);
   const [newCompany, setNewCompany] = useState(COMPANIES[0]);
-
-  // Helper to determine if credentials are required
-  const isAccessControlEnabled = newRole === Role.ADMIN || newRole === Role.LEADER;
 
   const filteredEmployees = employees.filter(e => {
     if (deletedIds.has(e.id)) return false;
@@ -44,7 +42,6 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, refreshData }) =
     setNewName('');
     setNewUsername('');
     setNewEmail('');
-    setNewPassword(''); // Reset password
     setNewRole(Role.EMPLOYEE);
     setNewTeam(TEAMS[0]);
     setNewCompany(COMPANIES[0]);
@@ -56,7 +53,6 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, refreshData }) =
     setNewName(employee.name);
     setNewUsername(employee.username);
     setNewEmail(employee.email || '');
-    setNewPassword(''); // Don't show existing password, allow overwrite
     setNewRole(employee.role);
     setNewTeam(employee.team);
     setNewCompany(employee.company || COMPANIES[0]);
@@ -67,22 +63,17 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, refreshData }) =
     e.preventDefault();
     setLoadingAction('save');
     
-    // Logic to determine username
     let finalUsername = newUsername;
 
-    // If regular employee (no login access), we auto-generate a username placeholder
-    if (!isAccessControlEnabled) {
+    // Gerador de username simples se não fornecido
+    if (!finalUsername) {
         if (newEmail && newEmail.includes('@')) {
-             // If email exists, use part before @
              finalUsername = newEmail.split('@')[0];
         } else {
-             // If no email, generate from Name (First.Last)
              const cleanName = newName.toLowerCase().trim().split(' ');
              const baseName = cleanName.length > 1 
                 ? `${cleanName[0]}.${cleanName[cleanName.length - 1]}` 
                 : cleanName[0];
-             
-             // Remove accents and special chars for the ID/Username
              finalUsername = baseName.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9.]/g, "");
         }
     }
@@ -96,38 +87,35 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, refreshData }) =
       team: newTeam,
       company: newCompany,
       active: true,
-      // Only send password if it is an Admin/Leader AND it was typed/required
-      password: (isAccessControlEnabled && newPassword) ? newPassword : undefined 
     };
 
-    if (editingId) {
-      await sheetService.updateEmployee(employeeData);
-    } else {
-      await sheetService.addEmployee(employeeData);
+    try {
+      if (editingId) {
+        await firebaseService.updateEmployee(employeeData);
+      } else {
+        await firebaseService.addEmployee(employeeData);
+      }
+      refreshData();
+      setIsModalOpen(false);
+    } catch (error) {
+      console.error("Error saving employee:", error);
+      alert("Erro ao salvar.");
+    } finally {
+      setLoadingAction(null);
+      setEditingId(null);
     }
-
-    refreshData();
-    setIsModalOpen(false);
-    setLoadingAction(null);
-    
-    // Reset form
-    setNewName('');
-    setNewUsername('');
-    setNewEmail('');
-    setNewPassword('');
-    setEditingId(null);
   };
 
   const handleDelete = async (id: string) => {
     if (confirm('Tem certeza que deseja remover este colaborador?')) {
       setLoadingAction(id);
       setDeletedIds(prev => new Set(prev).add(id));
-      const success = await sheetService.deleteEmployee(id);
+      const success = await firebaseService.deleteEmployee(id);
       
       if (success) {
         refreshData();
       } else {
-        alert("Erro ao excluir. O colaborador não foi encontrado na planilha ou houve um erro de conexão.");
+        alert("Erro ao excluir do banco de dados.");
         setDeletedIds(prev => {
            const newSet = new Set(prev);
            newSet.delete(id);
@@ -242,7 +230,7 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, refreshData }) =
               <h3 className="text-xl font-bold text-slate-800">
                 {editingId ? 'Editar Colaborador' : 'Adicionar Colaborador'}
               </h3>
-              <p className="text-xs text-slate-500">Preencha os dados de perfil.</p>
+              <p className="text-xs text-slate-500">Dados do perfil no sistema.</p>
             </div>
             
             <form onSubmit={handleSaveEmployee} className="space-y-4 overflow-y-auto pr-3 custom-scrollbar flex-1 min-h-0">
@@ -286,42 +274,6 @@ const EmployeeList: React.FC<EmployeeListProps> = ({ employees, refreshData }) =
                   onChange={e => setNewEmail(e.target.value)} 
                 />
               </div>
-
-              {/* Access Control Section - Only visible for Leaders and Admins */}
-              {isAccessControlEnabled && (
-                <div className="border-t border-slate-100 pt-4 mt-2 animate-fade-in">
-                   <h4 className="text-sm font-bold text-slate-700 mb-3 flex items-center">
-                      <Lock size={14} className="mr-1" />
-                      Credenciais de Acesso
-                   </h4>
-                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                          <label className="block text-sm font-medium text-slate-700">Usuário de Login</label>
-                          <input 
-                            required 
-                            type="text" 
-                            className="mt-1 block w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 bg-slate-50 text-slate-900" 
-                            value={newUsername} 
-                            onChange={e => setNewUsername(e.target.value)} 
-                          />
-                      </div>
-                      <div>
-                          <label className="block text-sm font-medium text-slate-700">
-                            {editingId ? 'Nova Senha (Opcional)' : 'Senha de Acesso'}
-                          </label>
-                          <input 
-                             type="text" 
-                             placeholder={editingId ? "Manter atual" : "Digite a senha"}
-                             required={!editingId} // Required only when creating new Admin/Leader
-                             className="mt-1 block w-full border border-slate-300 rounded-lg px-3 py-2 shadow-sm focus:ring-indigo-500 focus:border-indigo-500 bg-slate-50 text-slate-900" 
-                             value={newPassword} 
-                             onChange={e => setNewPassword(e.target.value)} 
-                          />
-                          {editingId && <p className="text-[10px] text-slate-400 mt-1">Deixe em branco para não alterar.</p>}
-                      </div>
-                   </div>
-                </div>
-              )}
 
               <div className="flex justify-end gap-3 mt-6 pt-2">
                 <button type="button" onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-slate-700 hover:bg-slate-100 rounded-lg">Cancelar</button>

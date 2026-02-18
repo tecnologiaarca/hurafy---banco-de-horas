@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Save, AlertTriangle, Calendar, Clock, User, ChevronDown, Check, Calculator, Info } from 'lucide-react';
 import { Employee, RecordType, TimeRecord, Role } from '../types';
 import { v4 as uuidv4 } from 'uuid';
-import { sheetService } from '../services/sheetService';
+import { firebaseService } from '../services/firebaseService';
 
 interface TimeEntryFormProps {
   currentUser: Employee;
@@ -56,6 +56,14 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Set current user default selection logic
+  useEffect(() => {
+    if (currentUser.role === Role.EMPLOYEE) {
+       setSelectedEmployee(currentUser.id);
+       setSearchTerm(currentUser.name);
+    }
+  }, [currentUser]);
+
   // Update Mapped Record Type when Occurrence Selection Changes
   useEffect(() => {
     const option = OCCURRENCE_OPTIONS.find(o => o.label === occurrenceType);
@@ -90,8 +98,6 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
     }
   }, [startTime, endTime]);
 
-  // Filter employees: Previously restricted Leaders to their own team.
-  // Updated requirement: Leaders can search/select ANY employee.
   const availableEmployees = employees;
 
   const filteredEmployees = availableEmployees.filter(emp => 
@@ -135,23 +141,26 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
     };
 
     try {
-      await sheetService.addRecord(newRecord);
+      // Usando Firebase Service
+      await firebaseService.saveTimeRecord(newRecord);
       setSuccess(true);
       onRecordAdded();
       
       // Reset form
-      setSelectedEmployee('');
-      setSearchTerm('');
+      if (currentUser.role !== Role.EMPLOYEE) {
+         setSelectedEmployee('');
+         setSearchTerm('');
+      }
       setStartTime('');
       setEndTime('');
       setReason('');
       setCalculatedDuration({ hours: 0, minutes: 0 });
-      setOccurrenceType('BH Positivo'); // Reset to default
+      setOccurrenceType('BH Positivo');
       
       setTimeout(() => setSuccess(false), 3000);
     } catch (error) {
       console.error("Error saving record", error);
-      alert("Erro ao salvar o registro.");
+      alert("Erro ao salvar no banco de dados.");
     } finally {
       setLoading(false);
     }
@@ -181,7 +190,7 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
               <Check size={32} className="text-green-600" strokeWidth={3} />
             </div>
             <h3 className="text-2xl font-bold text-slate-800 mb-2">Sucesso!</h3>
-            <p className="text-slate-600 text-center">Ocorrência registrada com sucesso.</p>
+            <p className="text-slate-600 text-center">Ocorrência salva na nuvem.</p>
           </div>
         </div>
       )}
@@ -192,7 +201,7 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
             <Clock className="w-6 h-6" />
             Nova Ocorrência
           </h2>
-          <p className="text-indigo-100 text-sm mt-1">Registre o período da ocorrência para cálculo automático.</p>
+          <p className="text-indigo-100 text-sm mt-1">Os dados serão sincronizados com o servidor.</p>
         </div>
 
         <form onSubmit={handleSubmit} className="p-8 space-y-6">
@@ -208,15 +217,16 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
                 <input
                   type="text"
                   required
+                  disabled={currentUser.role === Role.EMPLOYEE}
                   value={searchTerm}
                   onChange={(e) => {
                     setSearchTerm(e.target.value);
-                    setSelectedEmployee(''); // Reset selection on change
+                    setSelectedEmployee(''); 
                     setIsDropdownOpen(true);
                   }}
                   onFocus={() => setIsDropdownOpen(true)}
                   placeholder="Buscar colaborador..."
-                  className={`block w-full pl-10 pr-10 py-3 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-lg border bg-slate-50 text-slate-900 placeholder-slate-400 ${selectedEmployee ? 'border-green-500 ring-1 ring-green-500 bg-green-50' : ''}`}
+                  className={`block w-full pl-10 pr-10 py-3 text-base border-slate-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-lg border bg-slate-50 text-slate-900 placeholder-slate-400 ${selectedEmployee ? 'border-green-500 ring-1 ring-green-500 bg-green-50' : ''} ${currentUser.role === Role.EMPLOYEE ? 'bg-slate-100 cursor-not-allowed text-slate-500' : ''}`}
                 />
                 <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
                    {selectedEmployee ? (
@@ -230,7 +240,7 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
               </div>
 
               {/* Dropdown List */}
-              {isDropdownOpen && (
+              {isDropdownOpen && currentUser.role !== Role.EMPLOYEE && (
                 <div className="absolute z-10 mt-1 w-full bg-white shadow-xl max-h-60 rounded-md py-1 text-base ring-1 ring-black ring-opacity-5 overflow-auto focus:outline-none sm:text-sm">
                   {filteredEmployees.length > 0 ? (
                     filteredEmployees.map((emp) => (
@@ -359,15 +369,6 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
               placeholder="Detalhes adicionais..."
               className="block w-full px-3 py-3 border-slate-300 rounded-lg border bg-slate-50 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-slate-900"
             />
-          </div>
-
-          {/* Info Box */}
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex items-start gap-3">
-             <AlertTriangle className="text-blue-500 shrink-0 mt-0.5" size={20} />
-             <div className="text-sm text-blue-800">
-               <p className="font-semibold">Atenção Líderes:</p>
-               <p>O sistema calcula o tempo exato entre a entrada e saída. Certifique-se de descontar intervalos de almoço se necessário, registrando dois períodos separados.</p>
-             </div>
           </div>
 
           <div className="pt-2">
