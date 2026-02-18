@@ -7,6 +7,7 @@ import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { TimeRecord, Employee, RecordType, Role } from '../types';
 import { firebaseService } from '../services/firebaseService';
+import ConfirmModal from './ConfirmModal';
 
 interface ReportsProps {
   records: TimeRecord[];
@@ -42,11 +43,15 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
   const [currentPage, setCurrentPage] = useState(1);
   const [isPageChanging, setIsPageChanging] = useState(false);
 
-  // Modal States
+  // Edit Modal States
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingRecord, setEditingRecord] = useState<TimeRecord | null>(null);
   const [isBatchEdit, setIsBatchEdit] = useState(false); 
   
+  // Delete Modal States
+  const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
+  const [recordToDelete, setRecordToDelete] = useState<{id: string, batchId?: string} | null>(null);
+
   // Form States
   const [editDate, setEditDate] = useState('');
   const [editStartTime, setEditStartTime] = useState('');
@@ -102,16 +107,11 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
     return strVal.length > 5 ? strVal.substring(0, 5) : strVal;
   };
 
-  // Helper específico para inputs de formulário (retorna vazio se inválido, nunca '-')
   const formatTimeForInput = (val?: string | number) => {
     if (!val) return '';
     const strVal = String(val);
-    // Se for formato ISO
     if (strVal.includes('T')) return strVal.split('T')[1].substring(0, 5);
-    // Se for formato HH:mm:ss
     if (strVal.includes(':')) return strVal.substring(0, 5);
-    // Se for string simples HH:mm
-    if (/^\d{2}:\d{2}/.test(strVal)) return strVal.substring(0, 5);
     return '';
   };
   
@@ -161,21 +161,16 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
     }); 
   };
 
-  // --- EFFECT: HYDRATION (POPULAR FORMULÁRIO) ---
-  // Monitora o `editingRecord` e preenche os campos assim que ele é selecionado.
+  // --- EFFECT: HYDRATION ---
   useEffect(() => {
     if (editingRecord && isEditModalOpen) {
       setEditDate(safeDateForInput(editingRecord.date));
-      
       const start = formatTimeForInput(editingRecord.startTime);
       const end = formatTimeForInput(editingRecord.endTime);
-      
       setEditStartTime(start);
       setEditEndTime(end);
       setEditReason(editingRecord.reason || '');
       setEditOccurrenceType(editingRecord.occurrenceType || 'BH Positivo');
-      
-      // Carrega a duração salva no banco imediatamente para não mostrar 0h 0m
       setEditCalculatedDuration({
         hours: editingRecord.hours || 0,
         minutes: editingRecord.minutes || 0
@@ -184,16 +179,16 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
     }
   }, [editingRecord, isEditModalOpen]);
 
-  // --- EFFECT: CALCULATION (RECALCULAR DURAÇÃO) ---
-  // Se o usuário mexer nos horários, recalculamos a duração
+  // --- EFFECT: CALCULATION ---
   useEffect(() => {
-    // Se os campos estiverem vazios, não recalculamos para não sobrescrever a hidratação inicial com zeros
     if (!editStartTime || !editEndTime) return;
-
+    if (editingRecord && isEditModalOpen) {
+        const currentStart = formatTimeForInput(editingRecord.startTime);
+        const currentEnd = formatTimeForInput(editingRecord.endTime);
+        if (editStartTime === currentStart && editEndTime === currentEnd) return;
+    }
     const [startH, startM] = editStartTime.split(':').map(Number);
     const [endH, endM] = editEndTime.split(':').map(Number);
-    
-    // Se a conversão falhar (NaN), aborta
     if (isNaN(startH) || isNaN(endH)) return;
 
     const startTotalMins = startH * 60 + startM;
@@ -209,7 +204,7 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
       const m = diffMins % 60;
       setEditCalculatedDuration({ hours: h, minutes: m });
     }
-  }, [editStartTime, editEndTime]);
+  }, [editStartTime, editEndTime, editingRecord, isEditModalOpen]);
 
   const showSuccessPopup = (message: string) => {
     setSuccessMessage(message);
@@ -218,12 +213,21 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
     }, 3000);
   };
 
-  const handleDelete = async (id: string, batchId?: string) => {
-    if (batchId) {
-        if (!confirm(`⚠️ Atenção: Este registro faz parte de um Lançamento em Massa.\n\nDeseja excluir TODOS os registros deste lote?`)) return;
-        
-        setLoadingAction(`batch-${batchId}`);
-        try {
+  // --- DELETE HANDLERS ---
+  const handleOpenDeleteModal = (id: string, batchId?: string) => {
+    setRecordToDelete({ id, batchId });
+    setIsDeleteModalOpen(true);
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!recordToDelete) return;
+    
+    const { id, batchId } = recordToDelete;
+    
+    setLoadingAction('deleting');
+
+    try {
+        if (batchId) {
            const result = await firebaseService.deleteBatchRecords(batchId);
            if (result.success) {
                refreshData(); 
@@ -231,35 +235,26 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
            } else {
                alert("Erro ao excluir lote.");
            }
-        } catch(e) {
-            console.error(e);
-            alert("Erro ao processar exclusão.");
-        } finally {
-            setLoadingAction(null);
-        }
-        return;
-    }
-
-    if (!confirm('Tem certeza que deseja excluir este registro permanentemente?')) return;
-    setLoadingAction(id);
-    try {
-        const success = await firebaseService.deleteRecord(id);
-        if (success) {
-          onDeleteRecord(id);
-          showSuccessPopup('Registro excluído com sucesso.');
         } else {
-          alert('Erro ao excluir registro.');
+            const success = await firebaseService.deleteRecord(id);
+            if (success) {
+              onDeleteRecord(id);
+              showSuccessPopup('Registro excluído com sucesso.');
+            } else {
+              alert('Erro ao excluir registro.');
+            }
         }
-    } catch (e) {
+    } catch(e) {
+        console.error(e);
         alert("Erro de conexão.");
     } finally {
         setLoadingAction(null);
+        setIsDeleteModalOpen(false);
+        setRecordToDelete(null);
     }
   };
 
   const openEditModal = (record: TimeRecord, isBatch: boolean = false) => {
-    // Apenas define o registro e abre o modal.
-    // O useEffect [editingRecord] cuidará de preencher os dados.
     setEditingRecord(record);
     setIsBatchEdit(isBatch);
     setIsEditModalOpen(true);
@@ -277,7 +272,6 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
     const option = OCCURRENCE_OPTIONS.find(o => o.label === editOccurrenceType);
     const newType = option ? option.type : RecordType.CREDIT;
 
-    // Constrói objeto de atualização com os dados do form
     const updateData: Partial<TimeRecord> = {
       date: editDate,
       startTime: editStartTime,
@@ -299,7 +293,6 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
                 alert("Falha ao atualizar lote.");
             }
         } else {
-            // Merge cuidadoso: mantém ID original e dados antigos, sobrescreve com novos
             const updatedRecord = { ...editingRecord, ...updateData };
             const success = await firebaseService.updateRecord(updatedRecord);
             if (success) {
@@ -371,7 +364,7 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
     if (newPage >= 1 && newPage <= totalPages) {
        setIsPageChanging(true);
        setCurrentPage(newPage);
-       setTimeout(() => setIsPageChanging(false), 200); // tempo para o fade visual
+       setTimeout(() => setIsPageChanging(false), 200);
     }
   };
 
@@ -382,6 +375,7 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
      setExpandedBatches(newSet);
   };
 
+  // --- EXPORT FUNCTIONS (PDF/EXCEL) - Same as before ---
   const generateDetailedPDF = () => {
     const doc = new jsPDF();
     doc.setFontSize(18);
@@ -453,6 +447,18 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
           </div>
         </div>
       )}
+
+      <ConfirmModal 
+        isOpen={isDeleteModalOpen}
+        onClose={() => setIsDeleteModalOpen(false)}
+        onConfirm={handleConfirmDelete}
+        isLoading={loadingAction === 'deleting'}
+        title={recordToDelete?.batchId ? "Excluir Lote Completo" : "Confirmar Exclusão"}
+        message={recordToDelete?.batchId 
+          ? "Atenção: Este registro faz parte de um Lançamento em Massa. Ao confirmar, TODOS os registros deste lote serão excluídos permanentemente."
+          : "Tem certeza que deseja excluir este registro? Esta ação não pode ser desfeita."
+        }
+      />
       
       {/* Header */}
       <div>
@@ -563,11 +569,11 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
                 <thead className="bg-slate-50">
                 <tr>
                     <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Data</th>
-                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Início</th>
-                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Fim</th>
                     <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Colaborador / Lote</th>
                     <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Tipo</th>
                     <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Descrição</th>
+                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Início</th>
+                    <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Fim</th>
                     <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Tempo</th>
                     <th className="px-6 py-3 text-right text-xs font-bold text-slate-600 uppercase tracking-wider">Ações</th>
                 </tr>
@@ -591,8 +597,8 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
                         <React.Fragment key={`batch-${item.batchId}`}>
                             <tr className="bg-purple-50/50 hover:bg-purple-50 border-l-4 border-l-purple-500">
                             <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-slate-800">{formatDate(item.date)}</td>
-                            <td className="px-6 py-4 whitespace-nowrap text-xs font-mono text-slate-500">{formatTimeOnly(item.startTime)}</td>
-                            <td className="px-6 py-4 whitespace-nowrap text-xs font-mono text-slate-500">{formatTimeOnly(item.endTime)}</td>
+                            
+                            {/* Colaborador / Lote */}
                             <td className="px-6 py-4">
                                 <div className="flex items-center gap-2">
                                     <button onClick={() => toggleBatch(item.batchId)} className="p-1 rounded hover:bg-purple-200 text-purple-700 transition-colors">
@@ -608,17 +614,31 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
                                     </div>
                                 </div>
                             </td>
+
+                            {/* Tipo */}
                             <td className="px-6 py-4 whitespace-nowrap">
                                 <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full bg-purple-100 text-purple-800 border border-purple-200`}>
                                     {item.occurrenceType} (Lote)
                                 </span>
                             </td>
+
+                            {/* Descrição */}
                             <td className="px-6 py-4 text-sm text-slate-600 max-w-xs truncate font-medium italic">
                                 {item.reason}
                             </td>
+
+                            {/* Início */}
+                            <td className="px-6 py-4 whitespace-nowrap text-xs font-mono text-slate-500">{formatTimeOnly(item.startTime)}</td>
+                            
+                            {/* Fim */}
+                            <td className="px-6 py-4 whitespace-nowrap text-xs font-mono text-slate-500">{formatTimeOnly(item.endTime)}</td>
+                            
+                            {/* Tempo */}
                             <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-slate-700">
                                 {item.hours}h {item.minutes}m <span className="text-xs font-normal text-slate-400">(cada)</span>
                             </td>
+
+                            {/* Ações */}
                             <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                                 {editable && (
                                     <div className="flex items-center justify-end gap-2">
@@ -626,12 +646,11 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
                                         <Edit size={16} />
                                     </button>
                                     <button 
-                                        onClick={() => handleDelete(item.id, item.batchId)} 
+                                        onClick={() => handleOpenDeleteModal(item.id, item.batchId)} 
                                         className="text-red-600 hover:text-red-900 p-1.5 hover:bg-red-50 rounded-lg flex items-center gap-1 border border-transparent hover:border-red-100 transition-all" 
                                         title="Excluir Lote Completo"
-                                        disabled={loadingAction === `batch-${item.batchId}`}
                                     >
-                                        {loadingAction === `batch-${item.batchId}` ? <Loader2 size={16} className="animate-spin"/> : <Trash2 size={16} />}
+                                        <Trash2 size={16} />
                                     </button>
                                     </div>
                                 )}
@@ -640,14 +659,14 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
                             {isExpanded && batchMap[item.batchId].map((child: TimeRecord) => (
                             <tr key={child.id} className="bg-slate-50/50 hover:bg-slate-100 animate-fade-in">
                                 <td className="px-6 py-3 whitespace-nowrap text-xs text-slate-400 pl-12 border-l-4 border-l-transparent">↳</td>
-                                <td className="px-6 py-3 whitespace-nowrap text-xs font-mono text-slate-400">{formatTimeOnly(child.startTime)}</td>
-                                <td className="px-6 py-3 whitespace-nowrap text-xs font-mono text-slate-400">{formatTimeOnly(child.endTime)}</td>
                                 <td className="px-6 py-3 whitespace-nowrap">
                                     <div className="text-sm text-slate-700">{child.employeeName}</div>
                                     <div className="text-xs text-slate-400">{getEmployeeCompany(child.employeeId)}</div>
                                 </td>
                                 <td className="px-6 py-3 whitespace-nowrap text-xs text-slate-400">Ver Lote</td>
                                 <td className="px-6 py-3 text-xs text-slate-400 italic">Ver Lote</td>
+                                <td className="px-6 py-3 whitespace-nowrap text-xs font-mono text-slate-400">{formatTimeOnly(child.startTime)}</td>
+                                <td className="px-6 py-3 whitespace-nowrap text-xs font-mono text-slate-400">{formatTimeOnly(child.endTime)}</td>
                                 <td className="px-6 py-3 whitespace-nowrap text-xs text-slate-500 font-mono">
                                     {child.hours}h {child.minutes}m
                                 </td>
@@ -663,22 +682,36 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
                     return (
                     <tr key={item.id} className="hover:bg-slate-50 transition-colors">
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-900">{formatDate(item.date)}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-slate-600">{formatTimeOnly(item.startTime)}</td>
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-slate-600">{formatTimeOnly(item.endTime)}</td>
+                        
+                        {/* Colaborador */}
                         <td className="px-6 py-4 whitespace-nowrap">
                         <div className="text-sm text-slate-900">{item.employeeName}</div>
                         <div className="text-xs text-slate-400">{getEmployeeCompany(item.employeeId)}</div>
                         </td>
+
+                        {/* Tipo */}
                         <td className="px-6 py-4 whitespace-nowrap">
                         <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${item.type === RecordType.CREDIT ? 'bg-green-100 text-green-800' : item.type === RecordType.DEBIT ? 'bg-red-100 text-red-800' : 'bg-slate-100 text-slate-600'}`}>{item.occurrenceType}</span>
                         </td>
+
+                        {/* Descrição */}
                         <td className="px-6 py-4 text-sm text-slate-500 max-w-xs truncate" title={item.reason}>{item.reason}</td>
+                        
+                        {/* Início */}
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-slate-600">{formatTimeOnly(item.startTime)}</td>
+                        
+                        {/* Fim */}
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-slate-600">{formatTimeOnly(item.endTime)}</td>
+
+                        {/* Tempo */}
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-slate-700">{item.hours}h {item.minutes}m</td>
+                        
+                        {/* Ações */}
                         <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                         {editable && (
                             <div className="flex items-center justify-end gap-2">
                             <button onClick={() => openEditModal(item)} className="text-indigo-600 hover:text-indigo-800 p-1 hover:bg-slate-50 rounded" title="Editar"><Edit size={16} /></button>
-                            <button onClick={() => handleDelete(item.id)} className="text-red-600 hover:text-red-900 p-1 hover:bg-red-50 rounded" title="Excluir" disabled={loadingAction === item.id}>{loadingAction === item.id ? <Loader2 size={16} className="animate-spin"/> : <Trash2 size={16} />}</button>
+                            <button onClick={() => handleOpenDeleteModal(item.id)} className="text-red-600 hover:text-red-900 p-1 hover:bg-red-50 rounded" title="Excluir"><Trash2 size={16} /></button>
                             </div>
                         )}
                         </td>

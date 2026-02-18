@@ -218,10 +218,10 @@ const Settings: React.FC<SettingsProps> = ({ companies, teams, employees, refres
 
   useEffect(() => {
     const performMigration = async () => {
-       const needsCompanyMigration = companies.length === 0;
-       const needsTeamMigration = teams.length === 0;
-
-       if (!needsCompanyMigration && !needsTeamMigration) return;
+       // TRAVA DE SEGURANÇA: Se já existir QUALQUER dado, aborta para evitar duplicidade.
+       if (companies.length > 0 || teams.length > 0) {
+           return;
+       }
 
        setIsMigrating(true);
        console.log("🔄 Iniciando Auto-Hidratação de configurações...");
@@ -239,16 +239,12 @@ const Settings: React.FC<SettingsProps> = ({ companies, teams, employees, refres
 
           const promises = [];
 
-          if (needsCompanyMigration) {
-             for (const comp of uniqueCompanies) {
-                if (comp) promises.push(firebaseService.addSettingItem('settings_companies', comp));
-             }
+          for (const comp of uniqueCompanies) {
+             if (comp) promises.push(firebaseService.addSettingItem('settings_companies', comp));
           }
 
-          if (needsTeamMigration) {
-             for (const team of uniqueTeams) {
-                if (team) promises.push(firebaseService.addSettingItem('settings_areas', team));
-             }
+          for (const team of uniqueTeams) {
+             if (team) promises.push(firebaseService.addSettingItem('settings_areas', team));
           }
 
           if (promises.length > 0) {
