@@ -85,7 +85,7 @@ const BulkOccurrence: React.FC<BulkOccurrenceProps> = ({
       const recordType = typeObj ? typeObj.type : RecordType.NEUTRAL;
       const batchId = uuidv4();
 
-      const recordsToSave: TimeRecord[] = Array.from(selectedUserIds).map(userId => {
+      const recordsToSave: TimeRecord[] = Array.from(selectedUserIds).map((userId: string) => {
         const emp = employees.find(e => e.id === userId);
         return {
           id: uuidv4(),

@@ -43,9 +43,9 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentRole, currentPage
   const roleLabel = currentRole === Role.ADMIN ? 'Administrador' : 'Líder';
 
   return (
-    <div className={`fixed inset-y-0 left-0 z-50 w-72 bg-slate-900 text-white transform transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 md:static md:inset-0 shadow-xl flex flex-col`}>
+    <div className={`fixed inset-y-0 left-0 z-50 w-72 bg-[#0F172A] text-white transform transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full'} md:translate-x-0 md:static md:inset-0 shadow-xl flex flex-col`}>
       <div className="flex flex-col h-full">
-        <div className="p-6 border-b border-slate-700">
+        <div className="p-6 border-b border-slate-800">
           <h1 className="text-xl font-bold tracking-wider uppercase text-white">Hurafy</h1>
           <p className="text-xs text-slate-400 mt-1">Formulário de Ocorrência</p>
         </div>
@@ -58,14 +58,14 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentRole, currentPage
               <button
                 key={item.id}
                 onClick={() => setPage(item.id)}
-                className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors duration-200 group flex-nowrap ${
+                className={`w-full flex items-center space-x-3 px-4 py-3 rounded-lg transition-all duration-200 group flex-nowrap ${
                   isActive 
-                    ? 'bg-indigo-600 text-white shadow-lg' 
-                    : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+                    ? 'bg-slate-800 text-white border-l-[3px] border-indigo-500 shadow-sm' 
+                    : 'text-slate-400 hover:bg-slate-800/50 hover:text-white border-l-[3px] border-transparent'
                 }`}
               >
                 <div className="flex items-center justify-center w-6 h-6 shrink-0">
-                    <Icon size={20} className={`${isActive ? 'text-white' : 'text-slate-400 group-hover:text-white'}`} />
+                    <Icon size={20} className={`${isActive ? 'text-indigo-400' : 'text-slate-400 group-hover:text-white'}`} />
                 </div>
                 <span className="font-medium text-sm whitespace-nowrap overflow-hidden text-ellipsis">{item.label}</span>
               </button>
@@ -73,7 +73,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentUser, currentRole, currentPage
           })}
         </nav>
 
-        <div className="p-4 border-t border-slate-700">
+        <div className="p-4 border-t border-slate-800">
           <div className="flex items-center space-x-3 px-4 py-3 mb-2 bg-slate-800/50 rounded-xl">
              <div className="w-9 h-9 rounded-full bg-indigo-500 flex items-center justify-center text-xs font-bold shrink-0 text-white shadow-inner">
                {getInitials()}

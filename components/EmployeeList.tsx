@@ -3,6 +3,7 @@ import { Plus, Trash2, Search, User, Shield, Briefcase, Edit, Loader2, Building2
 import { Employee, Role, AppSetting } from '../types';
 import { firebaseService } from '../services/firebaseService';
 import { v4 as uuidv4 } from 'uuid';
+import ConfirmModal from './ConfirmModal';
 
 interface EmployeeListProps {
   employees: Employee[];
@@ -23,7 +24,8 @@ const EmployeeList: React.FC<EmployeeListProps> = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   
-  const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
+  // Estado para controlar o modal de confirmação de exclusão
+  const [employeeToDelete, setEmployeeToDelete] = useState<string | null>(null);
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [newName, setNewName] = useState('');
@@ -33,7 +35,6 @@ const EmployeeList: React.FC<EmployeeListProps> = ({
   const [newCompany, setNewCompany] = useState('');
 
   const filteredEmployees = employees.filter(e => {
-    if (deletedIds.has(e.id)) return false;
     return (
       e.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
       e.team.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -125,26 +126,36 @@ const EmployeeList: React.FC<EmployeeListProps> = ({
     }
   };
 
-  const handleDelete = async (id: string) => {
+  // Solicita a exclusão abrindo o modal
+  const requestDelete = (id: string) => {
     if (id === currentUser.id) {
         alert("Você não pode excluir sua própria conta.");
         return;
     }
-    if (confirm('Tem certeza que deseja remover este colaborador?')) {
-      setLoadingAction(id);
-      setDeletedIds(prev => new Set(prev).add(id));
-      const success = await firebaseService.deleteEmployee(id);
+    setEmployeeToDelete(id);
+  };
+
+  // Executa a exclusão no Firebase
+  const executeDelete = async () => {
+    if (!employeeToDelete) return;
+    
+    // Define loading action com o ID para mostrar spinner no botão (se visível) e no modal
+    setLoadingAction(employeeToDelete);
+
+    try {
+      const success = await firebaseService.deleteEmployee(employeeToDelete);
       
       if (success) {
+        // Apenas atualiza a lista após confirmação do Firebase
         refreshData();
+        setEmployeeToDelete(null); // Fecha o modal
       } else {
-        alert("Erro ao excluir do banco de dados.");
-        setDeletedIds(prev => {
-           const newSet = new Set(prev);
-           newSet.delete(id);
-           return newSet;
-        });
+        throw new Error("Falha ao excluir registro no banco de dados. Verifique suas permissões.");
       }
+    } catch (error: any) {
+      console.error("Erro na exclusão:", error);
+      alert(`Erro: ${error.message || "Não foi possível excluir o colaborador."}`);
+    } finally {
       setLoadingAction(null);
     }
   };
@@ -265,7 +276,7 @@ const EmployeeList: React.FC<EmployeeListProps> = ({
                           <Edit size={18} />
                         </button>
                         <button 
-                          onClick={() => handleDelete(employee.id)}
+                          onClick={() => requestDelete(employee.id)}
                           className={`text-slate-400 hover:text-red-600 transition-colors p-2 rounded-full hover:bg-red-50 ${employee.id === currentUser.id ? 'opacity-20 cursor-not-allowed' : ''}`}
                           title="Excluir"
                           disabled={loadingAction !== null || employee.id === currentUser.id}
@@ -359,6 +370,18 @@ const EmployeeList: React.FC<EmployeeListProps> = ({
           </div>
         </div>
       )}
+
+      {/* Modal de Confirmação de Exclusão */}
+      <ConfirmModal 
+        isOpen={!!employeeToDelete}
+        onClose={() => setEmployeeToDelete(null)}
+        onConfirm={executeDelete}
+        isLoading={loadingAction === employeeToDelete}
+        title="Excluir Colaborador"
+        message="Tem certeza que deseja remover este colaborador? Esta ação removerá o acesso ao sistema, mas o histórico de registros pode ser mantido."
+        confirmLabel="Sim, Excluir"
+        isDestructive={true}
+      />
     </div>
   );
 };

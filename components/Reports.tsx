@@ -58,7 +58,7 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
   const [editingRecord, setEditingRecord] = useState<TimeRecord | null>(null);
   const [isBatchEdit, setIsBatchEdit] = useState(false); 
   
-  // Delete Modal States
+  // Delete Modal States (Single & Batch)
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [recordToDelete, setRecordToDelete] = useState<{id: string, batchId?: string} | null>(null);
 
@@ -523,6 +523,7 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
         </div>
       )}
 
+      {/* CONFIRM MODAL FOR DELETE SINGLE */}
       <ConfirmModal 
         isOpen={isDeleteModalOpen}
         onClose={() => setIsDeleteModalOpen(false)}
@@ -622,6 +623,7 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
                 <h3 className="text-lg font-bold text-slate-800 whitespace-nowrap hidden sm:block">
                     Consulta de Registros
                 </h3>
+                
                 <div className="text-sm font-semibold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">
                     {processedRecords.length} registros encontrados
                 </div>
@@ -726,22 +728,26 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
                     if (isBatchRow) {
                     return (
                         <React.Fragment key={`batch-${item.batchId}`}>
-                            <tr className="bg-purple-50/50 hover:bg-purple-50 border-l-4 border-l-purple-500">
+                            <tr className="bg-purple-50/50 hover:bg-purple-50 transition-colors">
                             <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-slate-800">{formatDate(item.date)}</td>
                             
                             {/* Colaborador / Lote */}
                             <td className="px-6 py-4">
-                                <div className="flex items-center gap-2">
-                                    <button onClick={() => toggleBatch(item.batchId)} className="p-1 rounded hover:bg-purple-200 text-purple-700 transition-colors">
-                                    {isExpanded ? <ChevronDown size={18}/> : <ChevronRight size={18}/>}
+                                <div className="flex items-start gap-2">
+                                    <button 
+                                        onClick={() => toggleBatch(item.batchId)} 
+                                        className="-ml-2 mt-0.5 p-1 rounded hover:bg-purple-200 text-purple-700 transition-colors shrink-0"
+                                    >
+                                        {isExpanded ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
                                     </button>
                                     <div>
-                                    <div className="flex items-center gap-2 text-sm font-bold text-purple-900">
-                                        <Layers size={16} /> Lançamento em Massa
-                                    </div>
-                                    <div className="text-xs text-purple-600 font-medium mt-0.5">
-                                        {batchCount} colaboradores afetados
-                                    </div>
+                                        <div className="flex items-center gap-2 text-sm font-bold text-purple-900">
+                                            <Layers size={16} /> 
+                                            <span>Lançamento em Massa</span>
+                                        </div>
+                                        <div className="text-xs text-purple-600 font-medium mt-0.5">
+                                            {batchCount} colaboradores afetados
+                                        </div>
                                     </div>
                                 </div>
                             </td>
@@ -759,10 +765,10 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
                             </td>
 
                             {/* Início */}
-                            <td className="px-6 py-4 whitespace-nowrap text-xs font-mono text-slate-500">{formatTimeOnly(item.startTime)}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-600">{formatTimeOnly(item.startTime)}</td>
                             
                             {/* Fim */}
-                            <td className="px-6 py-4 whitespace-nowrap text-xs font-mono text-slate-500">{formatTimeOnly(item.endTime)}</td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-600">{formatTimeOnly(item.endTime)}</td>
                             
                             {/* Tempo */}
                             <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-slate-700">
@@ -796,9 +802,9 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
                                 </td>
                                 <td className="px-6 py-3 whitespace-nowrap text-xs text-slate-400">Ver Lote</td>
                                 <td className="px-6 py-3 text-xs text-slate-400 italic">Ver Lote</td>
-                                <td className="px-6 py-3 whitespace-nowrap text-xs font-mono text-slate-400">{formatTimeOnly(child.startTime)}</td>
-                                <td className="px-6 py-3 whitespace-nowrap text-xs font-mono text-slate-400">{formatTimeOnly(child.endTime)}</td>
-                                <td className="px-6 py-3 whitespace-nowrap text-xs text-slate-500 font-mono">
+                                <td className="px-6 py-3 whitespace-nowrap text-sm font-medium text-slate-500">{formatTimeOnly(child.startTime)}</td>
+                                <td className="px-6 py-3 whitespace-nowrap text-sm font-medium text-slate-500">{formatTimeOnly(child.endTime)}</td>
+                                <td className="px-6 py-3 whitespace-nowrap text-xs text-slate-500 font-medium">
                                     {child.hours}h {child.minutes}m
                                 </td>
                                 <td className="px-6 py-3 whitespace-nowrap text-right text-xs">
@@ -829,10 +835,10 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
                         <td className="px-6 py-4 text-sm text-slate-500 max-w-xs truncate" title={item.reason}>{item.reason}</td>
                         
                         {/* Início */}
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-slate-600">{formatTimeOnly(item.startTime)}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-600">{formatTimeOnly(item.startTime)}</td>
                         
                         {/* Fim */}
-                        <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-slate-600">{formatTimeOnly(item.endTime)}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-600">{formatTimeOnly(item.endTime)}</td>
 
                         {/* Tempo */}
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-slate-700">{item.hours}h {item.minutes}m</td>

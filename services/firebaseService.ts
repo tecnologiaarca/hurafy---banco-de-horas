@@ -170,7 +170,7 @@ export const firebaseService = {
 
         // Proteção Crítica: Não apagar o Admin TI e nem o usuário que está logado executando a ação
         if (email === 'ti@arcaplast.com.br' || email === currentUserEmail?.toLowerCase()) {
-          console.log(`🛡️ Protegendo usuário admin: ${data.name} (${email})`);
+          console.log(`🛡️ Protegendo usuário admin: ${data.name} (${data.email})`);
           return;
         }
 
@@ -329,6 +329,17 @@ export const firebaseService = {
   // --- TIME RECORDS CRUD ---
 
   async saveTimeRecord(record: TimeRecord): Promise<void> {
+    // Usamos setDoc com o record.id que é um UUID gerado no client.
+    // Isso garante que o ID do documento seja igual ao ID do registro, facilitando updates e deletes.
+    // A coleção DEVE ser 'time_records'.
+    
+    // Safety check: Firestore hates undefined
+    if (Object.values(record).some(val => val === undefined)) {
+       console.warn("⚠️ Warning: Record contains undefined values. Cleaning before save.");
+       // Simple cleaner if needed, though component should handle it
+       record = JSON.parse(JSON.stringify(record));
+    }
+
     await setDoc(doc(db, 'time_records', record.id), {
       ...record,
       timestamp: serverTimestamp()
@@ -338,8 +349,11 @@ export const firebaseService = {
   // Nova função para lançamentos manuais do RH
   async saveManualOccurrence(occurrenceData: any): Promise<void> {
     try {
-      await setDoc(doc(db, 'time_records', occurrenceData.id), {
-        ...occurrenceData,
+      // Clean undefined
+      const cleanData = JSON.parse(JSON.stringify(occurrenceData));
+      
+      await setDoc(doc(db, 'time_records', cleanData.id), {
+        ...cleanData,
         timestamp: serverTimestamp()
       });
       console.log("✅ Ocorrência manual salva com sucesso.");
@@ -365,9 +379,11 @@ export const firebaseService = {
       for (const chunk of chunks) {
         const batch = writeBatch(db);
         chunk.forEach(record => {
-           const docRef = doc(db, 'time_records', record.id);
+           // Clean record
+           const cleanRecord = JSON.parse(JSON.stringify(record));
+           const docRef = doc(db, 'time_records', cleanRecord.id);
            batch.set(docRef, {
-             ...record,
+             ...cleanRecord,
              timestamp: serverTimestamp()
            });
         });
@@ -415,6 +431,38 @@ export const firebaseService = {
     } catch (error) {
       console.error("❌ Erro na exclusão em massa:", error);
       return { success: false, count: 0 };
+    }
+  },
+  
+  // EXCLUSÃO TOTAL (LIMPEZA DE BASE)
+  async deleteAllRecords(): Promise<{ success: boolean; count: number }> {
+    console.log("🔥 LIMPEZA TOTAL DE REGISTROS INICIADA...");
+    try {
+        const q = query(collection(db, 'time_records'));
+        const querySnapshot = await getDocs(q);
+        const totalDocs = querySnapshot.docs.length;
+        
+        if (totalDocs === 0) return { success: true, count: 0 };
+        
+        // Chunking para respeitar o limite de 500 ops por batch
+        const CHUNK_SIZE = 400; // Margem de segurança
+        const chunks = [];
+        
+        for (let i = 0; i < totalDocs; i += CHUNK_SIZE) {
+            chunks.push(querySnapshot.docs.slice(i, i + CHUNK_SIZE));
+        }
+        
+        for (const chunk of chunks) {
+            const batch = writeBatch(db);
+            chunk.forEach(doc => batch.delete(doc.ref));
+            await batch.commit();
+            console.log(`🗑️ Lote de limpeza processado (${chunk.length} itens)`);
+        }
+        
+        return { success: true, count: totalDocs };
+    } catch (error) {
+        console.error("❌ Erro fatal na limpeza total:", error);
+        throw error;
     }
   },
 
@@ -491,7 +539,9 @@ export const firebaseService = {
   async updateRecord(record: TimeRecord): Promise<boolean> {
     try {
       const { id, ...data } = record;
-      await updateDoc(doc(db, 'time_records', id), data as any);
+      // Clean undefined before update
+      const cleanData = JSON.parse(JSON.stringify(data));
+      await updateDoc(doc(db, 'time_records', id), cleanData as any);
       return true;
     } catch (e) {
       console.error(e);

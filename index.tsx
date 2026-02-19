@@ -14,8 +14,7 @@ interface ErrorBoundaryState {
 
 // Error Boundary para capturar erros de renderização e evitar tela branca total
 class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  public state: ErrorBoundaryState;
-
+  
   constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = { 

@@ -1,0 +1,70 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --- FUNÇÕES AUXILIARES ---
+
+    // Verifica se o usuário está autenticado
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Busca os dados do usuário atual na coleção 'employees' para checar a Role
+    function getUserData() {
+      return get(/databases/$(database)/documents/employees/$(request.auth.uid)).data;
+    }
+
+    // Verifica se o usuário possui a role ADMIN
+    function isAdmin() {
+      return isAuthenticated() && getUserData().role == 'ADMIN';
+    }
+
+    // Verifica se o usuário é o dono do recurso (quem criou o registro)
+    function isOwner(resourceData) {
+      return isAuthenticated() && resourceData.createdBy == request.auth.uid;
+    }
+
+    // Validação de esquema para TimeRecord
+    // Garante que a data seja string e horas/minutos sejam números
+    function isValidTimeRecord(data) {
+      return data.date is string
+             && (data.hours is number || data.hours is int)
+             && (data.minutes is number || data.minutes is int);
+    }
+
+    // --- REGRAS DAS COLEÇÕES ---
+
+    // Coleção: employees
+    // Leitura: Qualquer autenticado (necessário para listagens e autocomplete)
+    // Escrita (Criar/Editar/Deletar): Apenas ADMIN
+    match /employees/{employeeId} {
+      allow read: if isAuthenticated();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Coleção: time_records
+    // Leitura: Qualquer autenticado
+    // Criar: Qualquer autenticado (validando dados)
+    // Editar: Apenas o Autor ou ADMIN (validando dados)
+    // Deletar: Apenas ADMIN
+    match /time_records/{recordId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidTimeRecord(request.resource.data);
+      allow update: if (isOwner(resource.data) || isAdmin()) && isValidTimeRecord(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    // Coleções de Configurações (Empresas e Áreas)
+    // Leitura: Qualquer autenticado
+    // Escrita: Apenas ADMIN
+    match /settings_companies/{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    match /settings_areas/{document=**} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+  }
+}

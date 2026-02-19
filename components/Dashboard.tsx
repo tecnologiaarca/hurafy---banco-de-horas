@@ -147,8 +147,8 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
     { name: 'Horas Negativas', value: parseFloat(stats.negative.split('h')[0]) }
   ];
   
-  // Standard Emerald and Red
-  const COLORS = ['#10b981', '#ef4444'];
+  // Updated Colors for Minimalist Look (Medium Purple & Blue-Grey)
+  const COLORS = ['#818cf8', '#94a3b8'];
 
   const getDashboardTitle = () => {
     if (selectedEmpId) return 'Visão Individual';
@@ -268,7 +268,8 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
       </div>
       
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 transition-all hover:border-emerald-200">
+        {/* Metric Cards - No Border, Shadow-sm, White BG */}
+        <div className="bg-white p-6 rounded-xl shadow-sm transition-all">
           <div className="flex justify-between items-start">
             <div>
               <p className="text-sm font-medium text-slate-500">Saldo {selectedEmpId ? 'Atual' : (selectedTeam ? 'do Setor' : (selectedCompany ? 'da Empresa' : 'Global'))}</p>
@@ -285,7 +286,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
           </p>
         </div>
 
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 transition-all hover:border-blue-200">
+        <div className="bg-white p-6 rounded-xl shadow-sm transition-all">
           <div className="flex justify-between items-start">
             <div>
               <p className="text-sm font-medium text-slate-500">Colaboradores</p>
@@ -302,7 +303,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
           </p>
         </div>
 
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 transition-all hover:border-emerald-200">
+        <div className="bg-white p-6 rounded-xl shadow-sm transition-all">
           <div className="flex justify-between items-start">
             <div>
               <p className="text-sm font-medium text-slate-500">Total Positivo</p>
@@ -314,7 +315,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 transition-all hover:border-red-200">
+        <div className="bg-white p-6 rounded-xl shadow-sm transition-all">
           <div className="flex justify-between items-start">
             <div>
               <p className="text-sm font-medium text-slate-500">Total Negativo</p>
@@ -338,7 +339,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <div className="bg-white p-6 rounded-xl shadow-sm">
           <h3 className="text-lg font-semibold text-slate-800 mb-4">Horas por Empresa</h3>
           <div className="h-80 w-full">
             {companyChartData.length > 0 ? (
@@ -370,7 +371,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+        <div className="bg-white p-6 rounded-xl shadow-sm">
           <h3 className="text-lg font-semibold text-slate-800 mb-4">Proporção Geral (Crédito vs Débito)</h3>
           <div className="h-80 w-full">
             <ResponsiveContainer width="100%" height="100%">
@@ -396,7 +397,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
           </div>
         </div>
 
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 lg:col-span-2">
+        <div className="bg-white p-6 rounded-xl shadow-sm lg:col-span-2">
           <h3 className="text-lg font-semibold text-slate-800 mb-4">
              {selectedEmpId 
                ? 'Detalhe do Colaborador (Por Tipo)' 

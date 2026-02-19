@@ -49,6 +49,7 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const isAbsenceAdjustment = ['Ausência de Batida', 'Ajuste de Ponto'].includes(occurrenceType);
+  const isInformational = mappedRecordType === RecordType.NEUTRAL || isAbsenceAdjustment;
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -79,7 +80,9 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
     setIsTimeValid(true);
   }, [occurrenceType]);
 
+  // --- LÓGICA DE VALIDAÇÃO DE TEMPO ---
   useEffect(() => {
+    // 1. Caso especial: Ausência de Batida
     if (isAbsenceAdjustment) {
         setCalculatedDuration({ hours: 0, minutes: 0 });
         if (absenceTime) {
@@ -92,6 +95,7 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
              const startTotalMins = startH * 60 + startM;
              const endTotalMins = endH * 60 + endM;
 
+             // Permite tempos iguais para ajustes neutros
              if (startTotalMins === endTotalMins) {
                  setIsTimeValid(true);
                  return;
@@ -103,10 +107,11 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
              setIsTimeValid(true);
              return;
         }
-        setIsTimeValid(false); 
+        setIsTimeValid(true); 
         return;
     }
 
+    // 2. Casos normais
     if (!startTime || !endTime) {
       setCalculatedDuration({ hours: 0, minutes: 0 });
       setIsTimeValid(true);
@@ -118,9 +123,18 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
     const startTotalMins = startH * 60 + startM;
     const endTotalMins = endH * 60 + endM;
 
-    if (endTotalMins <= startTotalMins) {
+    if (endTotalMins < startTotalMins) {
       setIsTimeValid(false);
       setCalculatedDuration({ hours: 0, minutes: 0 });
+    } else if (endTotalMins === startTotalMins) {
+      // Se for informativo (Neutro), permitimos 0h.
+      if (mappedRecordType === RecordType.NEUTRAL) {
+         setIsTimeValid(true);
+         setCalculatedDuration({ hours: 0, minutes: 0 });
+      } else {
+         setIsTimeValid(true); 
+         setCalculatedDuration({ hours: 0, minutes: 0 });
+      }
     } else {
       setIsTimeValid(true);
       const diffMins = endTotalMins - startTotalMins;
@@ -128,7 +142,7 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
       const m = diffMins % 60;
       setCalculatedDuration({ hours: h, minutes: m });
     }
-  }, [startTime, endTime, absenceTime, isAbsenceAdjustment]);
+  }, [startTime, endTime, absenceTime, isAbsenceAdjustment, mappedRecordType]);
 
   const filteredEmployees = employees.filter(emp => 
     emp.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -143,85 +157,105 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedEmployee || !date || !reason) {
-        alert("Preencha todos os campos obrigatórios.");
-        return;
-    }
-
-    if (isAbsenceAdjustment) {
-        const hasSpecificTime = !!absenceTime;
-        const hasRange = !!(startTime && endTime);
-
-        if (!hasSpecificTime && !hasRange) {
-            alert("Informe o horário.");
-            return;
-        }
-
-        if (hasRange && startTime === endTime) {
-        } else if (hasRange && !isTimeValid) {
-           alert("Horário inválido.");
-           return;
-        }
-
-        if (reason.trim().length < 5) {
-            alert("A justificativa é obrigatória e deve ser detalhada.");
-            return;
-        }
-    } else {
-        if (!startTime || !endTime || !isTimeValid) {
-            alert("Verifique os horários de início e fim.");
-            return;
-        }
-        if (calculatedDuration.hours === 0 && calculatedDuration.minutes === 0) {
-            alert("A duração deve ser maior que zero.");
-            return;
-        }
-    }
-
-    setLoading(true);
     
-    const employee = employees.find(e => e.id === selectedEmployee);
-    const finalStartTime = (isAbsenceAdjustment && absenceTime) ? absenceTime : startTime;
-    const finalEndTime = (isAbsenceAdjustment && absenceTime) ? absenceTime : endTime;
-    
-    const newRecord: TimeRecord = {
-      id: uuidv4(),
-      employeeId: selectedEmployee,
-      employeeName: employee?.name || 'Desconhecido',
-      date, 
-      hours: isAbsenceAdjustment ? 0 : calculatedDuration.hours,
-      minutes: isAbsenceAdjustment ? 0 : calculatedDuration.minutes,
-      startTime: finalStartTime,
-      endTime: finalEndTime,
-      type: isAbsenceAdjustment ? RecordType.NEUTRAL : mappedRecordType,
-      occurrenceType,
-      reason,
-      createdAt: new Date().toISOString(),
-      createdBy: currentUser.id,
-      isAdjustment: isAbsenceAdjustment ? true : undefined,
-      status: isAbsenceAdjustment ? 'regularized' : undefined
-    };
-
+    // Tratamento de Erros e Logs no Submit
     try {
-      await firebaseService.saveTimeRecord(newRecord);
-      setSuccess(true);
-      onRecordAdded();
-      if (currentUser.role !== Role.EMPLOYEE) {
-         setSelectedEmployee('');
-         setSearchTerm('');
-      }
-      setStartTime('');
-      setEndTime('');
-      setAbsenceTime('');
-      setReason('');
-      setCalculatedDuration({ hours: 0, minutes: 0 });
-      setOccurrenceType('BH Positivo');
-      setTimeout(() => setSuccess(false), 3000);
-    } catch (error) {
-      console.error("Erro ao salvar batida:", error);
-      alert("Falha na comunicação com o servidor. Tente novamente.");
+        setLoading(true);
+
+        if (!selectedEmployee) {
+            throw new Error("Selecione um colaborador.");
+        }
+        if (!date) {
+            throw new Error("Selecione uma data.");
+        }
+        if (!reason) {
+            throw new Error("A justificativa é obrigatória.");
+        }
+
+        const employee = employees.find(e => e.id === selectedEmployee);
+        
+        // --- Normalização de Dados ---
+        
+        // 1. Horários
+        // Se isAbsenceAdjustment, usa absenceTime. Se não, usa start/end.
+        // Se estiverem vazios, força '00:00' conforme solicitado.
+        let rawStart = (isAbsenceAdjustment && absenceTime) ? absenceTime : startTime;
+        let rawEnd = (isAbsenceAdjustment && absenceTime) ? absenceTime : endTime;
+        
+        const finalStartTime = rawStart || '00:00';
+        const finalEndTime = rawEnd || '00:00';
+        
+        // 2. Horas/Minutos
+        let finalHours = 0;
+        let finalMinutes = 0;
+
+        if (isAbsenceAdjustment) {
+            finalHours = 0;
+            finalMinutes = 0;
+        } else {
+            // Garante que não seja undefined/null/NaN
+            finalHours = Number(calculatedDuration.hours) || 0;
+            finalMinutes = Number(calculatedDuration.minutes) || 0;
+        }
+
+        // 3. isAdjustment Boolean
+        // Garante true/false, nunca undefined
+        const finalIsAdjustment = Boolean(isAbsenceAdjustment);
+
+        // 4. Status
+        // Firestore rejeita undefined. Se não for regularized, usamos null ou string vazia.
+        const finalStatus = isAbsenceAdjustment ? 'regularized' : null;
+
+        const newRecord: TimeRecord = {
+          id: uuidv4(),
+          employeeId: selectedEmployee,
+          employeeName: employee?.name || 'Desconhecido',
+          date, 
+          hours: finalHours,
+          minutes: finalMinutes,
+          startTime: finalStartTime,
+          endTime: finalEndTime,
+          type: isAbsenceAdjustment ? RecordType.NEUTRAL : mappedRecordType,
+          occurrenceType,
+          reason: reason || '', // Garante string
+          createdAt: new Date().toISOString(),
+          createdBy: currentUser.id,
+          isAdjustment: finalIsAdjustment,
+          status: finalStatus as any // Cast para compatibilidade de tipo se necessário, mas envia null para o Firebase
+        };
+
+        console.log('Enviando registro normalizado:', newRecord);
+
+        // Limpeza final de segurança: remove chaves undefined se houver (embora tenhamos tratado acima)
+        const safeRecord = JSON.parse(JSON.stringify(newRecord));
+
+        await firebaseService.saveTimeRecord(safeRecord);
+        
+        console.log('✅ GRAVADO COM SUCESSO NO FIRESTORE');
+        
+        setSuccess(true);
+        onRecordAdded();
+        
+        // Reset do Formulário
+        if (currentUser.role !== Role.EMPLOYEE) {
+           setSelectedEmployee('');
+           setSearchTerm('');
+        }
+        setStartTime('');
+        setEndTime('');
+        setAbsenceTime('');
+        setReason('');
+        setCalculatedDuration({ hours: 0, minutes: 0 });
+        setOccurrenceType('BH Positivo');
+        
+        setTimeout(() => setSuccess(false), 3000);
+
+    } catch (error: any) {
+        console.error("Erro CRÍTICO ao salvar batida:", error);
+        // Alertando o erro para o usuário
+        alert('Erro ao salvar: ' + (error.message || 'Erro desconhecido. Verifique o console.'));
     } finally {
-      setLoading(false);
+        setLoading(false);
     }
   };
 
@@ -404,7 +438,6 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
                       <label className="block text-xs font-semibold text-slate-500 mb-1">Hora Início/Entrada</label>
                       <input 
                         type="time" 
-                        required
                         value={startTime}
                         onChange={(e) => setStartTime(e.target.value)}
                         className="block w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-slate-900 focus:ring-indigo-500 focus:border-indigo-500"
@@ -414,7 +447,6 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
                       <label className="block text-xs font-semibold text-slate-500 mb-1">Hora Fim/Saída</label>
                       <input 
                         type="time" 
-                        required
                         value={endTime}
                         onChange={(e) => setEndTime(e.target.value)}
                         className={`block w-full px-3 py-2 border rounded-lg bg-white text-slate-900 focus:ring-indigo-500 focus:border-indigo-500 ${!isTimeValid ? 'border-red-500 ring-1 ring-red-500' : 'border-slate-300'}`}
@@ -436,7 +468,7 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
                     </div>
                   </div>
                   {!isTimeValid && !isAbsenceAdjustment && (
-                    <p className="text-xs text-red-500 mt-1">A hora de término deve ser posterior à hora de início.</p>
+                    <p className="text-xs text-red-500 mt-1">A hora de término deve ser posterior à hora de início (exceto para informativos).</p>
                   )}
                 </div>
             )}
@@ -460,8 +492,12 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
           <div className="pt-2">
             <button
               type="submit"
-              disabled={loading || !selectedEmployee || (!isAbsenceAdjustment && !isTimeValid)}
-              className={`w-full flex justify-center py-4 px-4 border border-transparent rounded-xl shadow-sm text-base font-bold text-white transition-all ${loading || !selectedEmployee || (!isAbsenceAdjustment && !isTimeValid) ? 'bg-slate-400 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700 focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500'}`}
+              disabled={loading} // Travas de validação removidas conforme solicitado, apenas loading bloqueia
+              className={`w-full flex justify-center py-4 px-4 border border-transparent rounded-xl shadow-sm text-base font-bold text-white transition-all ${
+                loading 
+                  ? 'bg-slate-400 cursor-not-allowed' 
+                  : 'bg-indigo-600 hover:bg-indigo-700 focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500'
+              }`}
             >
               {loading ? (
                 <span className="flex items-center">
