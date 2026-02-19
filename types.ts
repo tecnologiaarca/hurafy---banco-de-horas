@@ -19,6 +19,7 @@ export interface Employee {
   role: Role;
   team: string; // Used to link leaders to employees
   company: string; // New field for Company Entity
+  department?: string; // Field for CSV compatibility
   active: boolean;
   email: string;
 }

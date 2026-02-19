@@ -62,10 +62,29 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
   };
 
   const stats = useMemo(() => {
+    // Inicialização segura com zeros
     let totalMinutes = 0;
     let positiveMins = 0;
     let negativeMins = 0;
     let neutralCount = 0;
+
+    // Se não houver registros, retorna valores zerados imediatamente
+    if (!filteredRecords || filteredRecords.length === 0) {
+       let activeCount = 0;
+       if (selectedEmpId) {
+         activeCount = 1;
+       } else {
+         activeCount = availableEmployees.filter(e => e.active).length;
+       }
+       return {
+         balance: '0h 00m',
+         positive: '0h 0m',
+         negative: '0h 0m',
+         neutralCount: 0,
+         employeeCount: activeCount,
+         isPositive: true
+       };
+    }
 
     filteredRecords.forEach(r => {
       const mins = (r.hours * 60) + r.minutes;
@@ -82,6 +101,11 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
 
     const isPositive = totalMinutes >= 0;
     const absTotalMinutes = Math.abs(totalMinutes);
+    
+    // Formatação de segurança para evitar NaN
+    const formatH = (mins: number) => Math.floor(mins / 60) || 0;
+    const formatM = (mins: number) => (mins % 60) || 0;
+
     let activeCount = 0;
     if (selectedEmpId) {
       activeCount = 1;
@@ -91,8 +115,8 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
 
     return {
       balance: `${isPositive ? '' : '-'}${Math.floor(absTotalMinutes / 60)}:${(absTotalMinutes % 60).toString().padStart(2, '0')}`,
-      positive: Math.floor(positiveMins / 60) + 'h ' + (positiveMins % 60) + 'm',
-      negative: Math.floor(negativeMins / 60) + 'h ' + (negativeMins % 60) + 'm',
+      positive: formatH(positiveMins) + 'h ' + formatM(positiveMins) + 'm',
+      negative: formatH(negativeMins) + 'h ' + formatM(negativeMins) + 'm',
       neutralCount,
       employeeCount: activeCount,
       isPositive
@@ -143,8 +167,8 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
   }, [filteredRecords, employees, selectedTeam, selectedEmpId]);
 
   const typeData = [
-    { name: 'Horas Positivas', value: parseFloat(stats.positive.split('h')[0]) },
-    { name: 'Horas Negativas', value: parseFloat(stats.negative.split('h')[0]) }
+    { name: 'Horas Positivas', value: parseFloat(stats.positive.split('h')[0]) || 0 },
+    { name: 'Horas Negativas', value: parseFloat(stats.negative.split('h')[0]) || 0 }
   ];
   
   // Updated Colors for Minimalist Look (Medium Purple & Blue-Grey)

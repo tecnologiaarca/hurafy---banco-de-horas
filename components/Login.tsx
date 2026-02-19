@@ -192,7 +192,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
           
           <div className="mt-12 text-center">
             <p className="text-xs text-slate-400">
-              &copy; {new Date().getFullYear()} Grupo Arca. Todos os direitos reservados.
+              &copy; 2026 Grupo Arca. Todos os direitos reservados.
             </p>
           </div>
         </div>

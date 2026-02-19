@@ -333,15 +333,12 @@ export const firebaseService = {
     // Isso garante que o ID do documento seja igual ao ID do registro, facilitando updates e deletes.
     // A coleção DEVE ser 'time_records'.
     
-    // Safety check: Firestore hates undefined
-    if (Object.values(record).some(val => val === undefined)) {
-       console.warn("⚠️ Warning: Record contains undefined values. Cleaning before save.");
-       // Simple cleaner if needed, though component should handle it
-       record = JSON.parse(JSON.stringify(record));
-    }
+    // Tratamento de segurança: Firestore rejeita campos undefined.
+    // Usamos JSON.parse(JSON.stringify()) para remover qualquer propriedade undefined do objeto.
+    const cleanRecord = JSON.parse(JSON.stringify(record));
 
-    await setDoc(doc(db, 'time_records', record.id), {
-      ...record,
+    await setDoc(doc(db, 'time_records', cleanRecord.id), {
+      ...cleanRecord,
       timestamp: serverTimestamp()
     });
   },
