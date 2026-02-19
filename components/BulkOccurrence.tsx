@@ -117,10 +117,12 @@ const BulkOccurrence: React.FC<BulkOccurrenceProps> = ({
         setMinutes(0);
         
         setTimeout(() => setSuccessMsg(null), 5000);
+      } else {
+          throw new Error("Falha na gravação em massa.");
       }
     } catch (error) {
       console.error(error);
-      alert("Erro ao processar lançamento em massa.");
+      alert("Erro de conexão: Não foi possível salvar os dados. Verifique sua internet.");
     } finally {
       setLoading(false);
     }

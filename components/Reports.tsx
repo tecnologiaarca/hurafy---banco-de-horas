@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  FileText, Users, Edit, Trash2, Loader2, Save, X, Check, Layers, ChevronDown, ChevronRight, AlertTriangle, FileSpreadsheet, Search, Download, ChevronLeft
+  FileText, Users, Edit, Trash2, Loader2, Save, X, Check, Layers, ChevronDown, ChevronRight, AlertTriangle, FileSpreadsheet, Search, Download, ChevronLeft, Calendar, RotateCcw
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -35,6 +35,16 @@ const ITEMS_PER_PAGE = 20;
 const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refreshData, onUpdateRecord, onDeleteRecord }) => {
   const [searchTerm, setSearchTerm] = useState('');
   
+  // Filtros de Data (Padrão: Mês Atual)
+  const [filterStartDate, setFilterStartDate] = useState(() => {
+    const date = new Date();
+    return new Date(date.getFullYear(), date.getMonth(), 1).toISOString().split('T')[0];
+  });
+  const [filterEndDate, setFilterEndDate] = useState(() => {
+    const date = new Date();
+    return new Date(date.getFullYear(), date.getMonth() + 1, 0).toISOString().split('T')[0];
+  });
+
   const [loadingAction, setLoadingAction] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [expandedBatches, setExpandedBatches] = useState<Set<string>>(new Set());
@@ -61,15 +71,50 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
   const [editCalculatedDuration, setEditCalculatedDuration] = useState({ hours: 0, minutes: 0 });
   const [isEditTimeValid, setIsEditTimeValid] = useState(true);
 
-  // Reset page when search changes
+  // Reset page when filters change
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm]);
+  }, [searchTerm, filterStartDate, filterEndDate]);
+
+  const handleClearFilters = () => {
+    const date = new Date();
+    setFilterStartDate(new Date(date.getFullYear(), date.getMonth(), 1).toISOString().split('T')[0]);
+    setFilterEndDate(new Date(date.getFullYear(), date.getMonth() + 1, 0).toISOString().split('T')[0]);
+    setSearchTerm('');
+  };
 
   const canUserEdit = (record: TimeRecord) => {
     if (currentUser.role === Role.ADMIN) return true;
     if (currentUser.role === Role.LEADER && record.createdBy === currentUser.id) return true;
     return false;
+  };
+
+  const timeToMinutes = (timeStr?: string) => {
+    if (!timeStr) return 0;
+    const [h, m] = timeStr.split(':').map(Number);
+    return (h * 60) + m;
+  };
+
+  const checkTimeOverlap = (employeeId: string, date: string, start: string, end: string, excludeRecordId?: string) => {
+    const newStart = timeToMinutes(start);
+    const newEnd = timeToMinutes(end);
+
+    // Ignora se não tiver horário definido (ex: lançamentos manuais sem horário)
+    if (newStart === 0 && newEnd === 0) return false;
+
+    return records.some(r => {
+      if (r.id === excludeRecordId) return false; // Ignora o próprio registro sendo editado
+      if (r.employeeId !== employeeId) return false;
+      if (r.date !== date) return false;
+      
+      const rStart = timeToMinutes(r.startTime);
+      const rEnd = timeToMinutes(r.endTime);
+
+      if (rStart === 0 && rEnd === 0) return false;
+
+      // Lógica de Overlap: (StartA < EndB) and (EndA > StartB)
+      return (newStart < rEnd && newEnd > rStart);
+    });
   };
 
   const formatTime = (totalMinutes: number) => {
@@ -233,7 +278,7 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
                refreshData(); 
                showSuccessPopup(`Lote excluído! ${result.count} registros removidos.`);
            } else {
-               alert("Erro ao excluir lote.");
+               throw new Error("Falha ao excluir lote no banco de dados.");
            }
         } else {
             const success = await firebaseService.deleteRecord(id);
@@ -241,12 +286,12 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
               onDeleteRecord(id);
               showSuccessPopup('Registro excluído com sucesso.');
             } else {
-              alert('Erro ao excluir registro.');
+              throw new Error("Falha ao excluir registro no banco de dados.");
             }
         }
     } catch(e) {
         console.error(e);
-        alert("Erro de conexão.");
+        alert("Erro de conexão: Não foi possível realizar a exclusão. Verifique sua internet.");
     } finally {
         setLoadingAction(null);
         setIsDeleteModalOpen(false);
@@ -275,6 +320,24 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
       return;
     }
 
+    // --- VALIDAÇÃO DE CONFLITO DE HORÁRIO ---
+    // Apenas verificamos conflito se não for uma edição de lote (batch), 
+    // pois validação em massa exigiria lógica complexa de backend ou iteração pesada.
+    if (!isBatchEdit && editStartTime && editEndTime) {
+      const hasConflict = checkTimeOverlap(
+        editingRecord.employeeId, 
+        editDate, 
+        editStartTime, 
+        editEndTime, 
+        editingRecord.id
+      );
+
+      if (hasConflict) {
+        alert('Atenção: Já existe um lançamento para este colaborador neste mesmo horário.');
+        return;
+      }
+    }
+
     setLoadingAction('modal-save');
     const option = OCCURRENCE_OPTIONS.find(o => o.label === editOccurrenceType);
     const newType = option ? option.type : RecordType.CREDIT;
@@ -297,7 +360,7 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
                 refreshData();
                 showSuccessPopup(`Lote atualizado! ${result.count} registros alterados.`);
             } else {
-                alert("Falha ao atualizar lote.");
+                throw new Error("Falha ao atualizar lote.");
             }
         } else {
             const updatedRecord = { ...editingRecord, ...updateData };
@@ -306,14 +369,14 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
                 onUpdateRecord(updatedRecord);
                 showSuccessPopup('Registro atualizado com sucesso.');
             } else {
-                alert("Falha ao salvar no banco.");
+                throw new Error("Falha ao salvar no banco.");
             }
         }
         setIsEditModalOpen(false);
         setEditingRecord(null);
     } catch (error) {
         console.error("Error updating record:", error);
-        alert("Erro ao conectar com o servidor.");
+        alert("Erro de conexão: Não foi possível salvar os dados. Verifique sua internet.");
     } finally {
         setLoadingAction(null);
     }
@@ -326,6 +389,11 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
       if (currentUser.role === Role.LEADER) return r.createdBy === currentUser.id;
       return false;
     });
+
+    // Date Filter
+    if (filterStartDate && filterEndDate) {
+      filtered = filtered.filter(r => r.date >= filterStartDate && r.date <= filterEndDate);
+    }
 
     // Search Filter
     if (searchTerm.trim()) {
@@ -360,7 +428,7 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
     });
 
     return { processedRecords: viewList, batchMap: batches };
-  }, [records, currentUser, searchTerm]);
+  }, [records, currentUser, searchTerm, filterStartDate, filterEndDate]);
 
   // --- PAGINATION LOGIC ---
   const totalPages = Math.ceil(processedRecords.length / ITEMS_PER_PAGE);
@@ -549,24 +617,76 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
       {/* --- QUERY SECTION --- */}
       <div className="animate-fade-in space-y-6">
         
-        <div className="flex flex-col sm:flex-row gap-4 justify-between items-center bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-            <h3 className="text-lg font-bold text-slate-800 whitespace-nowrap hidden sm:block">
-                Consulta de Registros
-            </h3>
-            <div className="relative w-full sm:max-w-md">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                <Search className="h-5 w-5 text-slate-400" />
+        <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col gap-4">
+            <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+                <h3 className="text-lg font-bold text-slate-800 whitespace-nowrap hidden sm:block">
+                    Consulta de Registros
+                </h3>
+                <div className="text-sm font-semibold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full">
+                    {processedRecords.length} registros encontrados
                 </div>
-                <input
-                type="text"
-                placeholder="Buscar por colaborador, tipo ou motivo..."
-                className="block w-full pl-10 pr-3 py-2.5 border border-slate-200 rounded-lg leading-5 bg-slate-50 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm transition-all"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                />
             </div>
-            <div className="text-sm text-slate-500 whitespace-nowrap">
-                Total: {processedRecords.length}
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3 items-end">
+                {/* Search Input */}
+                <div className="lg:col-span-4 relative">
+                     <label className="block text-xs font-semibold text-slate-500 mb-1 ml-1">Buscar</label>
+                     <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <Search className="h-4 w-4 text-slate-400" />
+                        </div>
+                        <input
+                            type="text"
+                            placeholder="Colaborador, tipo ou motivo..."
+                            className="block w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg bg-slate-50 text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm transition-all"
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                     </div>
+                </div>
+
+                {/* Date Filters */}
+                <div className="lg:col-span-3">
+                    <label className="block text-xs font-semibold text-slate-500 mb-1 ml-1">Data Início</label>
+                    <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <Calendar className="h-4 w-4 text-slate-400" />
+                        </div>
+                        <input 
+                            type="date"
+                            value={filterStartDate}
+                            onChange={e => setFilterStartDate(e.target.value)}
+                            className="block w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg bg-slate-50 text-slate-900 sm:text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                    </div>
+                </div>
+                
+                <div className="lg:col-span-3">
+                    <label className="block text-xs font-semibold text-slate-500 mb-1 ml-1">Data Fim</label>
+                    <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <Calendar className="h-4 w-4 text-slate-400" />
+                        </div>
+                        <input 
+                            type="date"
+                            value={filterEndDate}
+                            onChange={e => setFilterEndDate(e.target.value)}
+                            className="block w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg bg-slate-50 text-slate-900 sm:text-sm focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                        />
+                    </div>
+                </div>
+
+                {/* Clear Button */}
+                <div className="lg:col-span-2">
+                    <button 
+                        onClick={handleClearFilters}
+                        className="w-full py-2 px-3 bg-white border border-slate-300 rounded-lg text-slate-600 text-sm font-medium hover:bg-slate-50 hover:text-indigo-600 transition-colors flex items-center justify-center gap-2"
+                        title="Resetar para o mês atual"
+                    >
+                        <RotateCcw size={16} />
+                        Limpar
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -588,8 +708,12 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
                 <tbody className="bg-white divide-y divide-slate-200">
                 {paginatedRecords.length === 0 ? (
                     <tr>
-                        <td colSpan={8} className="px-6 py-10 text-center text-slate-500">
-                            Nenhum registro encontrado com os filtros atuais.
+                        <td colSpan={8} className="px-6 py-12 text-center">
+                            <div className="flex flex-col items-center justify-center text-slate-400">
+                                <Search className="w-8 h-8 mb-2 opacity-50" />
+                                <p className="text-sm font-medium">Nenhum registro encontrado para os filtros selecionados.</p>
+                                <button onClick={handleClearFilters} className="mt-2 text-indigo-600 text-xs hover:underline">Limpar filtros</button>
+                            </div>
                         </td>
                     </tr>
                 ) : (

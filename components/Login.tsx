@@ -44,10 +44,11 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
       if (result.success && result.user) {
         onLoginSuccess(result.user);
       } else {
-        setError(result.message || 'Credenciais inválidas.');
+        // Se a mensagem vier do serviço, usa ela. Se for erro genérico, exibe mensagem amigável.
+        setError(result.message || 'Erro de conexão: Não foi possível realizar o login. Verifique sua internet.');
       }
     } catch (err: any) {
-      setError('Erro inesperado. Verifique o console.');
+      setError('Erro de conexão: Verifique sua internet e tente novamente.');
       console.error(err);
     } finally {
       setLoading(false);
@@ -72,7 +73,7 @@ const Login: React.FC<LoginProps> = ({ onLoginSuccess }) => {
         setError(result.message);
       }
     } catch (err) {
-      setError('Erro ao enviar solicitação.');
+      setError('Erro de conexão: Não foi possível enviar a solicitação. Verifique sua internet.');
     } finally {
       setResetLoading(false);
     }
