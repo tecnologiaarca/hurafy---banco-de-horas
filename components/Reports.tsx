@@ -5,7 +5,7 @@ import {
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
-import { TimeRecord, Employee, RecordType, Role } from '../types';
+import { TimeRecord, Employee, RecordType, Role, AppSetting } from '../types';
 import { firebaseService } from '../services/firebaseService';
 import ConfirmModal from './ConfirmModal';
 
@@ -16,6 +16,8 @@ interface ReportsProps {
   refreshData: () => void;
   onUpdateRecord: (record: TimeRecord) => void;
   onDeleteRecord: (id: string) => void;
+  companyList: AppSetting[];
+  teamList: AppSetting[];
 }
 
 const OCCURRENCE_OPTIONS = [
@@ -32,9 +34,22 @@ const OCCURRENCE_OPTIONS = [
 
 const ITEMS_PER_PAGE = 20;
 
-const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refreshData, onUpdateRecord, onDeleteRecord }) => {
+const Reports: React.FC<ReportsProps> = ({ 
+  records, 
+  employees, 
+  currentUser, 
+  refreshData, 
+  onUpdateRecord, 
+  onDeleteRecord,
+  companyList,
+  teamList
+}) => {
   const [searchTerm, setSearchTerm] = useState('');
   
+  // Filtros de Exportação
+  const [exportFilterCompany, setExportFilterCompany] = useState('Todas as Empresas');
+  const [exportFilterTeam, setExportFilterTeam] = useState('Todos os Setores');
+
   // Filtros de Data (Padrão: Mês Atual)
   const [filterStartDate, setFilterStartDate] = useState(() => {
     const date = new Date();
@@ -81,6 +96,8 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
     setFilterStartDate(new Date(date.getFullYear(), date.getMonth(), 1).toISOString().split('T')[0]);
     setFilterEndDate(new Date(date.getFullYear(), date.getMonth() + 1, 0).toISOString().split('T')[0]);
     setSearchTerm('');
+    setExportFilterCompany('Todas as Empresas');
+    setExportFilterTeam('Todos os Setores');
   };
 
   const canUserEdit = (record: TimeRecord) => {
@@ -180,8 +197,15 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
   };
 
   const getConsolidatedData = () => {
+    let filteredRecords = [...records];
+    
+    // Apply date filters
+    if (filterStartDate && filterEndDate) {
+      filteredRecords = filteredRecords.filter(r => r.date >= filterStartDate && r.date <= filterEndDate);
+    }
+
     return employees.filter(e => e.active).map(emp => {
-      const empRecords = records.filter(r => r.employeeId === emp.id);
+      const empRecords = filteredRecords.filter(r => r.employeeId === emp.id);
       let creditMins = 0;
       let debitMins = 0;
       empRecords.forEach(r => {
@@ -201,8 +225,8 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
         rawBalance: netBalance 
       };
     }).sort((a, b) => {
-      if (a.company !== b.company) return a.company.localeCompare(b.company);
-      return a.name.localeCompare(b.name);
+      if (a.company !== b.company) return (a.company || '').localeCompare(b.company || '');
+      return (a.name || '').localeCompare(b.name || '');
     }); 
   };
 
@@ -395,17 +419,34 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
       filtered = filtered.filter(r => r.date >= filterStartDate && r.date <= filterEndDate);
     }
 
+    // Company Filter
+    if (exportFilterCompany !== 'Todas as Empresas') {
+      filtered = filtered.filter(r => getEmployeeCompany(r.employeeId) === exportFilterCompany);
+    }
+
+    // Team Filter
+    if (exportFilterTeam !== 'Todos os Setores') {
+      filtered = filtered.filter(r => {
+        const emp = employees.find(e => e.id === r.employeeId);
+        return emp && emp.team === exportFilterTeam;
+      });
+    }
+
     // Search Filter
     if (searchTerm.trim()) {
       const lowerTerm = searchTerm.toLowerCase();
       filtered = filtered.filter(r => 
-        r.employeeName.toLowerCase().includes(lowerTerm) ||
-        r.occurrenceType.toLowerCase().includes(lowerTerm) ||
-        r.reason.toLowerCase().includes(lowerTerm)
+        (r.employeeName || '').toLowerCase().includes(lowerTerm) ||
+        (r.occurrenceType || r.type || '').toLowerCase().includes(lowerTerm) ||
+        (r.reason || '').toLowerCase().includes(lowerTerm)
       );
     }
 
-    filtered.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    filtered.sort((a, b) => {
+      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return timeB - timeA;
+    });
 
     const viewList: any[] = [];
     const batches: Record<string, TimeRecord[]> = {};
@@ -428,7 +469,7 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
     });
 
     return { processedRecords: viewList, batchMap: batches };
-  }, [records, currentUser, searchTerm, filterStartDate, filterEndDate]);
+  }, [records, currentUser, searchTerm, filterStartDate, filterEndDate, exportFilterCompany, exportFilterTeam]);
 
   // --- PAGINATION LOGIC ---
   const totalPages = Math.ceil(processedRecords.length / ITEMS_PER_PAGE);
@@ -450,16 +491,74 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
      setExpandedBatches(newSet);
   };
 
-  // --- EXPORT FUNCTIONS (PDF/EXCEL) - Same as before ---
+  // --- EXPORT FUNCTIONS (PDF/EXCEL) ---
+  const getFilteredRecordsForExport = () => {
+    let filtered = [...records];
+    
+    // Role Filter
+    filtered = filtered.filter(r => {
+      if (currentUser.role === Role.ADMIN) return true;
+      if (currentUser.role === Role.LEADER) return r.createdBy === currentUser.id;
+      return false;
+    });
+
+    // Date Filter
+    if (filterStartDate && filterEndDate) {
+      filtered = filtered.filter(r => r.date >= filterStartDate && r.date <= filterEndDate);
+    }
+
+    // Company Filter
+    if (exportFilterCompany !== 'Todas as Empresas') {
+      filtered = filtered.filter(r => getEmployeeCompany(r.employeeId) === exportFilterCompany);
+    }
+    
+    // Team Filter
+    if (exportFilterTeam !== 'Todos os Setores') {
+      filtered = filtered.filter(r => {
+        const emp = employees.find(e => e.id === r.employeeId);
+        return emp && emp.team === exportFilterTeam;
+      });
+    }
+
+    // Search Filter
+    if (searchTerm.trim()) {
+      const lowerTerm = searchTerm.toLowerCase();
+      filtered = filtered.filter(r => 
+        (r.employeeName || '').toLowerCase().includes(lowerTerm) ||
+        (r.occurrenceType || r.type || '').toLowerCase().includes(lowerTerm) ||
+        (r.reason || '').toLowerCase().includes(lowerTerm)
+      );
+    }
+    
+    return filtered.sort((a, b) => {
+      const timeA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const timeB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return timeB - timeA;
+    });
+  };
+
   const generateDetailedPDF = () => {
     const doc = new jsPDF();
+    const filteredRecords = getFilteredRecordsForExport();
+    
     doc.setFontSize(18);
-    doc.text('Extrato Detalhado de Ocorrências', 14, 22);
+    let title = 'Extrato Detalhado de Ocorrências';
+    if (exportFilterCompany !== 'Todas as Empresas') title += ` - ${exportFilterCompany}`;
+    if (exportFilterTeam !== 'Todos os Setores') title += ` - ${exportFilterTeam}`;
+    
+    doc.text(title, 14, 22);
     doc.setFontSize(11);
-    doc.text(`Gerado em: ${new Date().toLocaleDateString('pt-BR')}`, 14, 30);
-    const tableData = records.map(r => [ 
+    
+    let periodText = `Gerado em: ${new Date().toLocaleDateString('pt-BR')}`;
+    if (filterStartDate && filterEndDate) {
+      periodText += ` | Período: ${formatDate(filterStartDate)} até ${formatDate(filterEndDate)}`;
+    }
+    doc.text(periodText, 14, 30);
+    
+    const tableData = filteredRecords.map(r => [ 
       formatDate(r.date), getEmployeeCompany(r.employeeId), r.employeeName, getLeaderName(r.createdBy), r.occurrenceType || r.type, r.reason, formatTimeOnly(r.startTime), formatTimeOnly(r.endTime), `${r.hours}h ${r.minutes}m`
     ]);
+    
     autoTable(doc, {
       head: [['Data', 'Empresa', 'Colaborador', 'Líder', 'Tipo', 'Descrição', 'Início', 'Fim', 'Tempo']],
       body: tableData,
@@ -468,25 +567,53 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
       headStyles: { fillColor: [71, 85, 105] }, // Slate-700
       columnStyles: { 5: { cellWidth: 35 } } 
     });
-    doc.save('extrato-detalhado.pdf');
+    doc.save(`extrato-detalhado-${new Date().getTime()}.pdf`);
   };
 
   const generateDetailedExcel = () => {
-    const ws = XLSX.utils.json_to_sheet(records.map(r => ({
-      Data: formatDate(r.date), Empresa: getEmployeeCompany(r.employeeId), Colaborador: r.employeeName, Líder: getLeaderName(r.createdBy), 'Tipo de Ocorrência': r.occurrenceType, 'Descrição': r.reason, 'Início': formatTimeOnly(r.startTime), 'Fim': formatTimeOnly(r.endTime), Horas: r.hours, Minutos: r.minutes
+    const filteredRecords = getFilteredRecordsForExport();
+    const ws = XLSX.utils.json_to_sheet(filteredRecords.map(r => ({
+      Data: formatDate(r.date), 
+      Empresa: getEmployeeCompany(r.employeeId), 
+      Colaborador: r.employeeName, 
+      Líder: getLeaderName(r.createdBy), 
+      'Tipo de Ocorrência': r.occurrenceType || r.type, 
+      'Descrição': r.reason, 
+      'Início': formatTimeOnly(r.startTime), 
+      'Fim': formatTimeOnly(r.endTime), 
+      'Duração': `${r.hours}h ${r.minutes}m`
     })));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Extrato Detalhado");
-    XLSX.writeFile(wb, "extrato-detalhado.xlsx");
+    XLSX.writeFile(wb, `extrato-detalhado-${new Date().getTime()}.xlsx`);
   };
 
   const generateGeneralPDF = () => {
     const doc = new jsPDF();
-    const data = getConsolidatedData();
+    let data = getConsolidatedData();
+    
+    if (exportFilterCompany !== 'Todas as Empresas') {
+      data = data.filter(d => d.company === exportFilterCompany);
+    }
+    
+    if (exportFilterTeam !== 'Todos os Setores') {
+      data = data.filter(d => d.team === exportFilterTeam);
+    }
+
     doc.setFontSize(18);
-    doc.text('Balanço Geral de Horas por Colaborador', 14, 22);
+    let title = 'Balanço Geral de Horas por Colaborador';
+    if (exportFilterCompany !== 'Todas as Empresas') title += ` - ${exportFilterCompany}`;
+    if (exportFilterTeam !== 'Todos os Setores') title += ` - ${exportFilterTeam}`;
+    
+    doc.text(title, 14, 22);
     doc.setFontSize(11);
-    doc.text(`Posição consolidada em: ${new Date().toLocaleDateString('pt-BR')}`, 14, 30);
+    
+    let periodText = `Posição consolidada em: ${new Date().toLocaleDateString('pt-BR')}`;
+    if (filterStartDate && filterEndDate) {
+      periodText += ` | Período: ${formatDate(filterStartDate)} até ${formatDate(filterEndDate)}`;
+    }
+    doc.text(periodText, 14, 30);
+    
     const tableData = data.map(d => [d.company, d.name, d.team, d.positive, d.negative, d.balance]);
     autoTable(doc, {
       head: [['Empresa', 'Colaborador', 'Setor', 'Total Positivo', 'Total Negativo', 'Saldo Líquido']],
@@ -496,17 +623,31 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
       columnStyles: { 0: { halign: 'left' }, 1: { halign: 'left' }, 5: { fontStyle: 'bold' } },
       headStyles: { fillColor: [79, 70, 229] }, // Indigo-600
     });
-    doc.save('balanco-geral-consolidado.pdf');
+    doc.save(`balanco-geral-${new Date().getTime()}.pdf`);
   };
 
   const generateGeneralExcel = () => {
-    const data = getConsolidatedData();
+    let data = getConsolidatedData();
+    
+    if (exportFilterCompany !== 'Todas as Empresas') {
+      data = data.filter(d => d.company === exportFilterCompany);
+    }
+    
+    if (exportFilterTeam !== 'Todos os Setores') {
+      data = data.filter(d => d.team === exportFilterTeam);
+    }
+
     const ws = XLSX.utils.json_to_sheet(data.map(d => ({
-      Empresa: d.company, Colaborador: d.name, Setor: d.team, 'Total Positivo': d.positive, 'Total Negativo': d.negative, 'Saldo Líquido': d.balance
+      Empresa: d.company, 
+      Colaborador: d.name, 
+      Setor: d.team, 
+      'Total Positivo': d.positive, 
+      'Total Negativo': d.negative, 
+      'Saldo Líquido': d.balance
     })));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Saldos Consolidados");
-    XLSX.writeFile(wb, "balanco-geral-consolidado.xlsx");
+    XLSX.writeFile(wb, `balanco-geral-${new Date().getTime()}.xlsx`);
   };
 
   return (
@@ -547,68 +688,99 @@ const Reports: React.FC<ReportsProps> = ({ records, employees, currentUser, refr
       </div>
 
       {/* --- EXPORT SECTION --- */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in">
-        
-        {/* Card 1: Balanço Geral (Admin Only) */}
-        {currentUser.role === Role.ADMIN && (
-            <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col h-full">
-                <div className="flex items-start gap-4 mb-4">
-                    <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg shrink-0">
-                    <Users size={24} />
-                    </div>
-                    <div>
-                    <h3 className="text-lg font-bold text-slate-800">Balanço Geral</h3>
-                    <p className="text-sm text-slate-500">Saldo final consolidado por colaborador.</p>
-                    </div>
-                </div>
-                
-                <div className="flex flex-wrap gap-3 mt-auto">
-                    <button 
-                    onClick={generateGeneralPDF} 
-                    className="flex-1 flex items-center justify-center px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:border-indigo-600 hover:text-indigo-600 hover:bg-slate-50 transition-all shadow-sm"
-                    >
-                    <FileText className="mr-2" size={16} /> 
-                    PDF
-                    </button>
-                    <button 
-                    onClick={generateGeneralExcel} 
-                    className="flex-1 flex items-center justify-center px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:border-indigo-600 hover:text-indigo-600 hover:bg-slate-50 transition-all shadow-sm"
-                    >
-                    <FileSpreadsheet className="mr-2" size={16} /> 
-                    Excel
-                    </button>
-                </div>
-            </div>
-        )}
+      <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-6">
+        <div className="flex flex-col md:flex-row gap-4">
+          <div className="flex-1">
+            <label className="block text-xs font-semibold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Filtrar por Empresa</label>
+            <select 
+              value={exportFilterCompany}
+              onChange={(e) => setExportFilterCompany(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+            >
+              <option value="Todas as Empresas">Todas as Empresas</option>
+              {companyList.map(c => (
+                <option key={c.id} value={c.name}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="flex-1">
+            <label className="block text-xs font-semibold text-slate-500 mb-1 ml-1 uppercase tracking-wider">Filtrar por Setor</label>
+            <select 
+              value={exportFilterTeam}
+              onChange={(e) => setExportFilterTeam(e.target.value)}
+              className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-slate-700 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+            >
+              <option value="Todos os Setores">Todos os Setores</option>
+              {teamList.map(t => (
+                <option key={t.id} value={t.name}>{t.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
 
-        {/* Card 2: Extrato Detalhado */}
-        <div className={`bg-white p-6 rounded-xl border border-slate-200 shadow-sm flex flex-col h-full ${currentUser.role !== Role.ADMIN ? 'md:col-span-2' : ''}`}>
-            <div className="flex items-start gap-4 mb-4">
-                <div className="p-2 bg-indigo-50 text-indigo-600 rounded-lg shrink-0">
-                <FileText size={24} />
-                </div>
-                <div>
-                <h3 className="text-lg font-bold text-slate-800">Extrato de Ocorrências</h3>
-                <p className="text-sm text-slate-500">Histórico completo de lançamentos.</p>
-                </div>
-            </div>
-            
-            <div className="flex flex-wrap gap-3 mt-auto">
-                <button 
-                onClick={generateDetailedPDF} 
-                className="flex-1 flex items-center justify-center px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:border-indigo-600 hover:text-indigo-600 hover:bg-slate-50 transition-all shadow-sm"
-                >
-                <FileText className="mr-2" size={16} /> 
-                PDF
-                </button>
-                <button 
-                onClick={generateDetailedExcel} 
-                className="flex-1 flex items-center justify-center px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:border-indigo-600 hover:text-indigo-600 hover:bg-slate-50 transition-all shadow-sm"
-                >
-                <FileSpreadsheet className="mr-2" size={16} /> 
-                Excel
-                </button>
-            </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-fade-in">
+          
+          {/* Card 1: Balanço Geral (Admin Only) */}
+          {currentUser.role === Role.ADMIN && (
+              <div className="bg-slate-50 p-5 rounded-xl border border-slate-200 flex flex-col h-full">
+                  <div className="flex items-start gap-4 mb-4">
+                      <div className="p-2 bg-indigo-100 text-indigo-600 rounded-lg shrink-0">
+                      <Users size={20} />
+                      </div>
+                      <div>
+                      <h3 className="text-base font-bold text-slate-800">Balanço Geral</h3>
+                      <p className="text-xs text-slate-500">Saldo final consolidado por colaborador.</p>
+                      </div>
+                  </div>
+                  
+                  <div className="flex flex-wrap gap-3 mt-auto">
+                      <button 
+                      onClick={generateGeneralPDF} 
+                      className="flex-1 flex items-center justify-center px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:border-indigo-600 hover:text-indigo-600 hover:bg-white transition-all shadow-sm"
+                      >
+                      <Download className="mr-2" size={14} /> 
+                      PDF
+                      </button>
+                      <button 
+                      onClick={generateGeneralExcel} 
+                      className="flex-1 flex items-center justify-center px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:border-indigo-600 hover:text-indigo-600 hover:bg-white transition-all shadow-sm"
+                      >
+                      <FileSpreadsheet className="mr-2" size={14} /> 
+                      Excel
+                      </button>
+                  </div>
+              </div>
+          )}
+
+          {/* Card 2: Extrato Detalhado */}
+          <div className={`bg-slate-50 p-5 rounded-xl border border-slate-200 flex flex-col h-full ${currentUser.role !== Role.ADMIN ? 'md:col-span-2' : ''}`}>
+              <div className="flex items-start gap-4 mb-4">
+                  <div className="p-2 bg-indigo-100 text-indigo-600 rounded-lg shrink-0">
+                  <FileText size={20} />
+                  </div>
+                  <div>
+                  <h3 className="text-base font-bold text-slate-800">Extrato de Ocorrências</h3>
+                  <p className="text-xs text-slate-500">Histórico completo de lançamentos.</p>
+                  </div>
+              </div>
+              
+              <div className="flex flex-wrap gap-3 mt-auto">
+                  <button 
+                  onClick={generateDetailedPDF} 
+                  className="flex-1 flex items-center justify-center px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:border-indigo-600 hover:text-indigo-600 hover:bg-white transition-all shadow-sm"
+                  >
+                  <Download className="mr-2" size={14} /> 
+                  PDF
+                  </button>
+                  <button 
+                  onClick={generateDetailedExcel} 
+                  className="flex-1 flex items-center justify-center px-4 py-2 bg-white border border-slate-200 rounded-lg text-sm font-medium text-slate-600 hover:border-indigo-600 hover:text-indigo-600 hover:bg-white transition-all shadow-sm"
+                  >
+                  <FileSpreadsheet className="mr-2" size={14} /> 
+                  Excel
+                  </button>
+              </div>
+          </div>
         </div>
       </div>
 

@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Save, User, ChevronDown, Check, Loader2, ClipboardList, AlertCircle, Clock } from 'lucide-react';
-import { Employee, RecordType, TimeRecord, Role } from '../types';
+import { Employee, RecordType, TimeRecord } from '../types';
 import { v4 as uuidv4 } from 'uuid';
 import { firebaseService } from '../services/firebaseService';
 

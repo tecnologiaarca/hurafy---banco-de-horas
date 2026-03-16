@@ -410,7 +410,7 @@ const Dashboard: React.FC<DashboardProps> = ({ records, employees }) => {
                   paddingAngle={5}
                   dataKey="value"
                 >
-                  {typeData.map((entry, index) => (
+                  {typeData.map((_entry, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>

@@ -206,6 +206,8 @@ const App: React.FC = () => {
               refreshData={fetchData} 
               onUpdateRecord={handleLocalRecordUpdate}
               onDeleteRecord={handleLocalRecordDelete}
+              companyList={companies}
+              teamList={teams}
             /> : 
             <div className="text-center p-10 text-slate-500">Acesso negado.</div>;
         case 'settings':

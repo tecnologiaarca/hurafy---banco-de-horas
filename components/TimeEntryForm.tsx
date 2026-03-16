@@ -49,7 +49,6 @@ const TimeEntryForm: React.FC<TimeEntryFormProps> = ({ currentUser, employees, o
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   const isAbsenceAdjustment = ['Ausência de Batida', 'Ajuste de Ponto'].includes(occurrenceType);
-  const isInformational = mappedRecordType === RecordType.NEUTRAL || isAbsenceAdjustment;
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {

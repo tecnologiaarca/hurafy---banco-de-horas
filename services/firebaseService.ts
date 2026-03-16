@@ -20,7 +20,7 @@ import {
   addDoc
 } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
-import { Employee, Role, TimeRecord, RecordType, AppSetting } from '../types';
+import { Employee, Role, TimeRecord, AppSetting } from '../types';
 
 export const firebaseService = {
   auth,

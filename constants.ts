@@ -1,4 +1,4 @@
-import { Employee, Role, RecordType, TimeRecord } from './types';
+import { Employee, TimeRecord } from './types';
 
 export const TEAMS = [
   'Colaborador',

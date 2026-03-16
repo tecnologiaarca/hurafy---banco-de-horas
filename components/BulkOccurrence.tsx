@@ -1,7 +1,7 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
   Users, Filter, Calendar, CheckSquare, Square, 
-  Save, Loader2, Building2, Briefcase, Check, AlertCircle 
+  Save, Loader2, Building2, Briefcase, Check 
 } from 'lucide-react';
 import { Employee, RecordType, TimeRecord, AppSetting } from '../types';
 import { v4 as uuidv4 } from 'uuid';

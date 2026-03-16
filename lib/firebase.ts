@@ -1,6 +1,6 @@
-import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { initializeApp, FirebaseApp } from 'firebase/app';
+import { getAuth, Auth } from 'firebase/auth';
+import { getFirestore, Firestore } from 'firebase/firestore';
 
 // Configuração direta para evitar erros de leitura de variáveis de ambiente
 const firebaseConfig = {
@@ -13,9 +13,9 @@ const firebaseConfig = {
   measurementId: "G-V567VPXXGV"
 };
 
-let app;
-let auth;
-let db;
+let app: FirebaseApp;
+let auth: Auth;
+let db: Firestore;
 
 try {
   app = initializeApp(firebaseConfig);
